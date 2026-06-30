@@ -1,0 +1,71 @@
+# ros_gz_bridge.yaml
+# Maps Gazebo (gz) transport topics <-> ROS 2 topics. ros_gz_bridge reads this
+# and creates one bridge per entry. Direction:
+#   GZ_TO_ROS  : data flows out of Gazebo into ROS (sensors, odom, clock)
+#   ROS_TO_GZ  : data flows from ROS into Gazebo (velocity commands)
+
+# --- Simulation clock: everything must run on sim time ---
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# --- Velocity command into the diff-drive plugin ---
+- ros_topic_name: "/cmd_vel"
+  gz_topic_name: "/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+# --- odom -> base_footprint TF out of the diff-drive plugin ---
+- ros_topic_name: "/tf"
+  gz_topic_name: "/tf"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+# --- Wheel odometry out of the diff-drive plugin ---
+- ros_topic_name: "/odom"
+  gz_topic_name: "/odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+# --- Joint states (wheel angles) ---
+- ros_topic_name: "/joint_states"
+  gz_topic_name: "/joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+
+# --- 2D LiDAR ---
+- ros_topic_name: "/scan"
+  gz_topic_name: "/scan"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+# --- IMU ---
+- ros_topic_name: "/imu"
+  gz_topic_name: "/imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+# --- RGBD camera: camera info + point cloud ---
+#  NOTE: the color & depth *images* (/camera/image, /camera/depth_image) are
+#  bridged by the dedicated ros_gz_image `image_bridge` node in the launch file
+#  (it uses image_transport), so they are intentionally NOT listed here to avoid
+#  a duplicate publisher on the same ROS topic.
+- ros_topic_name: "/camera/camera_info"
+  gz_topic_name: "/camera/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/camera/points"
+  gz_topic_name: "/camera/points"
+  ros_type_name: "sensor_msgs/msg/PointCloud2"
+  gz_type_name: "gz.msgs.PointCloudPacked"
+  direction: GZ_TO_ROS

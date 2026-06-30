@@ -1,0 +1,15 @@
+# patrol_waypoints.yaml
+# Waypoints for the patrol_commander, in the 'map' frame, as a flat list of
+# [x, y, yaw] triples. Edit these to match the map you build in Session 2.
+patrol_commander:
+  ros__parameters:
+    use_sim_time: true
+    loop: true
+    frame_id: "map"
+    # x,    y,    yaw
+    waypoints: [
+       2.0, -2.0,  0.0,
+       2.0,  2.0,  1.57,
+      -2.0,  2.0,  3.14,
+      -2.0, -2.0, -1.57
+    ]

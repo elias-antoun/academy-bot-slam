@@ -1,0 +1,7 @@
+# square_driver.yaml — parameters for the Session 1 drift demo.
+square_driver:
+  ros__parameters:
+    use_sim_time: true
+    side_length: 2.0      # metres per side of the square
+    linear_speed: 0.25    # m/s while driving straight
+    angular_speed: 0.6    # rad/s while turning

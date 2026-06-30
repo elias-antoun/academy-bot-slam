@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<!--
+  robot_core.xacro
+  The mechanical skeleton of AcadBot: a small differential-drive robot with two
+  driven wheels and a caster. Frames follow the ROS REP-103 / REP-105 layout:
+
+      base_footprint  (on the ground, used by Nav2)
+          └── base_link        (robot body origin)
+                ├── left_wheel
+                ├── right_wheel
+                └── caster_wheel
+
+  Sensor frames (lidar/camera/imu) are added in the sensor xacros.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ===================== Parameters ===================== -->
+  <xacro:property name="base_length" value="0.30"/>
+  <xacro:property name="base_width"  value="0.22"/>
+  <xacro:property name="base_height" value="0.10"/>
+  <xacro:property name="wheel_radius" value="0.05"/>
+  <xacro:property name="wheel_width"  value="0.04"/>
+  <xacro:property name="wheel_separation" value="0.26"/>  <!-- centre-to-centre -->
+  <xacro:property name="wheel_zoff" value="0.0"/>
+  <xacro:property name="caster_radius" value="0.025"/>
+
+  <!-- ===================== Materials ===================== -->
+  <material name="blue">  <color rgba="0.13 0.42 0.78 1.0"/></material>
+  <material name="grey">  <color rgba="0.4 0.4 0.4 1.0"/></material>
+  <material name="black"> <color rgba="0.05 0.05 0.05 1.0"/></material>
+  <material name="white"> <color rgba="0.9 0.9 0.9 1.0"/></material>
+
+  <!-- ===================== base_footprint ===================== -->
+  <!-- A massless frame projected onto the ground; Nav2 reasons about this. -->
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ===================== base_link (chassis) ===================== -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${base_height/2}" rpy="0 0 0"/>
+      <geometry><box size="${base_length} ${base_width} ${base_height}"/></geometry>
+      <material name="blue"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${base_height/2}" rpy="0 0 0"/>
+      <geometry><box size="${base_length} ${base_width} ${base_height}"/></geometry>
+    </collision>
+    <xacro:inertial_box mass="2.0" x="${base_length}" y="${base_width}" z="${base_height}">
+      <origin xyz="0 0 ${base_height/2}" rpy="0 0 0"/>
+    </xacro:inertial_box>
+  </link>
+
+  <!-- ===================== Drive wheels ===================== -->
+  <xacro:macro name="wheel" params="prefix y_reflect">
+    <link name="${prefix}_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <xacro:inertial_cylinder mass="0.3" length="${wheel_width}" radius="${wheel_radius}">
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+      </xacro:inertial_cylinder>
+    </link>
+
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child  link="${prefix}_wheel"/>
+      <origin xyz="0 ${y_reflect * wheel_separation/2} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:wheel prefix="left"  y_reflect="1"/>
+  <xacro:wheel prefix="right" y_reflect="-1"/>
+
+  <!-- ===================== Caster wheel ===================== -->
+  <link name="caster_wheel">
+    <visual>
+      <geometry><sphere radius="${caster_radius}"/></geometry>
+      <material name="grey"/>
+    </visual>
+    <collision>
+      <geometry><sphere radius="${caster_radius}"/></geometry>
+    </collision>
+    <xacro:inertial_sphere mass="0.05" radius="${caster_radius}">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_sphere>
+  </link>
+
+  <joint name="caster_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="caster_wheel"/>
+    <origin xyz="${base_length/2 - caster_radius} 0 ${-(wheel_radius - caster_radius)}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Low-friction caster so it slides instead of dragging (set in Gazebo). -->
+  <gazebo reference="caster_wheel">
+    <mu1>0.001</mu1>
+    <mu2>0.001</mu2>
+  </gazebo>
+
+</robot>

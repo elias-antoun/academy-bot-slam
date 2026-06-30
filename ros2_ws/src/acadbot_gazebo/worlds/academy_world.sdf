@@ -1,0 +1,129 @@
+<?xml version="1.0" ?>
+<!--
+  academy_world.sdf  (Gazebo Harmonic / SDF 1.10)
+  A small enclosed "office" the students map and navigate. The systems block at
+  the top is what makes the robot's sensors and diff-drive actually work:
+    * Physics            : simulate dynamics
+    * UserCommands       : allow spawning models at runtime
+    * SceneBroadcaster   : stream the scene to the GUI
+    * Sensors            : run the LiDAR / camera (renders depth & range)
+    * Imu / Contacts     : run the IMU and contact sensors
+-->
+<sdf version="1.10">
+  <world name="academy_world">
+
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
+
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.8 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.3 -0.9</direction>
+    </light>
+
+    <!-- Ground -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>50 50</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>50 50</size></plane></geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===================================================================
+         A simple closed room (8m x 6m) with an interior dividing wall, so
+         there is something for the LiDAR to see and for Nav2 to plan around.
+         Walls are reusable via the macro-like repetition below.
+         =================================================================== -->
+    <model name="walls">
+      <static>true</static>
+      <link name="link">
+        <!-- Outer walls: 8 x 6 room, walls 0.15 thick, 1.0 high -->
+        <!-- North wall -->
+        <collision name="c_n"><pose>0 3 0.5 0 0 0</pose>
+          <geometry><box><size>8 0.15 1.0</size></box></geometry></collision>
+        <visual name="v_n"><pose>0 3 0.5 0 0 0</pose>
+          <geometry><box><size>8 0.15 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.65 1</ambient><diffuse>0.6 0.6 0.65 1</diffuse></material></visual>
+        <!-- South wall -->
+        <collision name="c_s"><pose>0 -3 0.5 0 0 0</pose>
+          <geometry><box><size>8 0.15 1.0</size></box></geometry></collision>
+        <visual name="v_s"><pose>0 -3 0.5 0 0 0</pose>
+          <geometry><box><size>8 0.15 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.65 1</ambient><diffuse>0.6 0.6 0.65 1</diffuse></material></visual>
+        <!-- East wall -->
+        <collision name="c_e"><pose>4 0 0.5 0 0 0</pose>
+          <geometry><box><size>0.15 6 1.0</size></box></geometry></collision>
+        <visual name="v_e"><pose>4 0 0.5 0 0 0</pose>
+          <geometry><box><size>0.15 6 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.65 1</ambient><diffuse>0.6 0.6 0.65 1</diffuse></material></visual>
+        <!-- West wall -->
+        <collision name="c_w"><pose>-4 0 0.5 0 0 0</pose>
+          <geometry><box><size>0.15 6 1.0</size></box></geometry></collision>
+        <visual name="v_w"><pose>-4 0 0.5 0 0 0</pose>
+          <geometry><box><size>0.15 6 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.65 1</ambient><diffuse>0.6 0.6 0.65 1</diffuse></material></visual>
+        <!-- Interior divider (partial wall) creating a corridor -->
+        <collision name="c_div"><pose>0.5 1.0 0.5 0 0 0</pose>
+          <geometry><box><size>0.15 4 1.0</size></box></geometry></collision>
+        <visual name="v_div"><pose>0.5 1.0 0.5 0 0 0</pose>
+          <geometry><box><size>0.15 4 1.0</size></box></geometry>
+          <material><ambient>0.55 0.5 0.45 1</ambient><diffuse>0.55 0.5 0.45 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- A couple of box obstacles to make mapping & planning interesting -->
+    <model name="obstacle_1">
+      <static>true</static>
+      <pose>-2.0 -1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.8 0.3 0.2 1</ambient><diffuse>0.8 0.3 0.2 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="obstacle_2">
+      <static>true</static>
+      <pose>2.5 1.5 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><cylinder><radius>0.3</radius><length>0.6</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.3</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.2 0.6 0.3 1</ambient><diffuse>0.2 0.6 0.3 1</diffuse></material></visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

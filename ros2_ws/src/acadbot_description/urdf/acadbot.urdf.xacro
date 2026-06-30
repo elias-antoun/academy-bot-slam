@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!--
+  acadbot.urdf.xacro
+  Top-level robot description. Run it through xacro to get plain URDF:
+
+      xacro acadbot.urdf.xacro > acadbot.urdf
+
+  or let robot_state_publisher do it at launch time (see rsp.launch.py).
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="acadbot">
+
+  <xacro:include filename="$(find acadbot_description)/urdf/inertial_macros.xacro"/>
+  <xacro:include filename="$(find acadbot_description)/urdf/robot_core.xacro"/>
+  <xacro:include filename="$(find acadbot_description)/urdf/sensors.xacro"/>
+  <xacro:include filename="$(find acadbot_description)/urdf/gazebo_control.xacro"/>
+
+</robot>
