@@ -117,12 +117,20 @@ graph and the session-by-session learning outcomes.
 | `localization:=amcl` | `autonomy`, `navigation` | `slam` | Use AMCL + `map_server` on the `.yaml` grid instead of slam_toolbox on the pose graph. |
 | `nav2_delay:=<sec>` | `autonomy`, `navigation` | `12.0` | How long to wait for localization before starting Nav2. Raise it if you see `Failed to change state for node: controller_server`. |
 
-## Tools
+## Smoke-testing after a dependency bump
 
-`tools/drive_mapping_loop.py` drives a full-coverage route automatically so
-mapping can be smoke-tested unattended. It is a **test, not a mapping
-technique** — it pivots at corners and produces doubled walls. Build the
-reference map by hand.
+You do not need to drive to prove the SLAM pipeline is alive — the failure mode
+worth catching is slam_toolbox not activating, which shows up standing still:
+
+```bash
+ros2 launch acadbot_bringup mapping.launch.py headless:=true rviz:=false
+ros2 lifecycle get /slam_toolbox          # must be: active [3]
+ros2 topic echo /map --once | head -5     # must produce a grid
+ros2 run tf2_ros tf2_echo map odom        # must resolve
+```
+
+Map *quality* cannot be checked this way — it depends on how you drive. Build
+the reference map by hand.
 
 ## Known-good state
 
