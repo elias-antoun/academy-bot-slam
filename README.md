@@ -64,7 +64,10 @@ Drive the open-loop square and watch the estimated pose drift from the true pose
 ros2 launch acadbot_bringup mapping.launch.py          # sim + slam_toolbox + RViz
 ros2 run teleop_twist_keyboard teleop_twist_keyboard   # drive to build the map
 ```
-When the map looks good, save it (see `acadbot_navigation/maps/README.md`).
+Drive **slowly and in straight lines, and never spin in place** — a stationary
+rotation gives the scan matcher nothing to match and smears the map. When it
+looks good, save it in *both* formats (see `acadbot_navigation/maps/README.md`);
+Session 4 loads the serialized pose graph, not the `.pgm`.
 
 ### Session 3 — Visual SLAM
 The robot already publishes `/camera/image`, `/camera/depth_image` and
@@ -76,6 +79,13 @@ and visual-odometry concepts on top of the same robot.
 ros2 launch acadbot_bringup autonomy.launch.py         # sim + Nav2 + localization + RViz
 ros2 launch acadbot_control patrol.launch.py           # C++ Nav2 action client
 ```
+Set the initial pose in RViz first (**2D Pose Estimate**) until the laser lines
+up with the map — nothing downstream works until it does.
+
+Patrol waypoints are in the **map** frame, whose origin is wherever mapping
+started. AcadBot spawns at Gazebo `(-3, -2)`, so `map = gazebo + (3, 2)`; read
+real coordinates off RViz's *Publish Point* rather than guessing. See
+`acadbot_control/config/patrol_waypoints.yaml`.
 The C++ `patrol_commander` sends waypoint goals to Nav2; when the robot is
 blocked, Nav2's **recovery behaviors** (clear costmap → spin → back up → wait)
 kick in. Block its path with a chair in RViz's view to trigger them live.
@@ -95,3 +105,29 @@ kick in. Block its path with a chair in RViz's view to trigger them live.
 
 See [`PROJECT.md`](PROJECT.md) for the full architecture, the TF tree, the topic
 graph and the session-by-session learning outcomes.
+
+---
+
+## Useful launch arguments
+
+| Argument | Applies to | Default | Why you'd change it |
+|---|---|---|---|
+| `headless:=true` | `simulation`, `mapping`, `autonomy` | `false` | Gazebo server only — no GUI, no GPU. Needed for CI and for machines with no working X. |
+| `rviz:=false` | `mapping`, `autonomy` | `true` | Skip RViz2 for the same reason. |
+| `localization:=amcl` | `autonomy`, `navigation` | `slam` | Use AMCL + `map_server` on the `.yaml` grid instead of slam_toolbox on the pose graph. |
+| `nav2_delay:=<sec>` | `autonomy`, `navigation` | `12.0` | How long to wait for localization before starting Nav2. Raise it if you see `Failed to change state for node: controller_server`. |
+
+## Tools
+
+`tools/drive_mapping_loop.py` drives a full-coverage route automatically so
+mapping can be smoke-tested unattended. It is a **test, not a mapping
+technique** — it pivots at corners and produces doubled walls. Build the
+reference map by hand.
+
+## Known-good state
+
+Everything here was run end to end on a headless container: workspace builds
+clean (6/6 packages); the drift demo produces 0.458 m and 47.7° over two laps;
+mapping saves and serializes; all eight Nav2 servers reach `active` and a
+`navigate_to_pose` goal across the divider corridor succeeds within tolerance.
+Full record: `Sessions/_generator/VERIFICATION.md` one level up.

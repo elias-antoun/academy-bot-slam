@@ -14,7 +14,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                            GroupAction)
+                            GroupAction, TimerAction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -61,14 +61,27 @@ def generate_launch_description():
     )
 
     # --- The Nav2 navigation stack (planner, controller, behaviors, BT, ...) ---
+    # Our own bringup rather than nav2_bringup/navigation_launch.py: that one
+    # also starts docking_server and route_server, which this course does not
+    # use and does not configure — and a server that fails to configure makes
+    # the lifecycle manager abort, leaving every other server INACTIVE.
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(pkg_nav2_bringup, 'launch', 'navigation_launch.py')),
+            os.path.join(pkg_nav, 'launch', 'nav2_stack.launch.py')),
         launch_arguments={
             'use_sim_time': use_sim_time,
             'params_file': params_file,
         }.items(),
     )
+
+    # Nav2's costmaps refuse to configure until map->odom exists, and the
+    # lifecycle manager aborts the whole bringup if a transition times out.
+    # Localization needs a few seconds first (slam_toolbox has to deserialize
+    # the pose graph, which is not instant on a big map or a busy laptop), so
+    # hold the stack back rather than racing it. Raise nav2_delay if you still
+    # see "Failed to change state for node: controller_server".
+    delayed_nav2 = TimerAction(
+        period=LaunchConfiguration('nav2_delay'), actions=[nav2])
 
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
@@ -77,8 +90,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'localization', default_value='slam',
             description="'slam' (slam_toolbox) or 'amcl'"),
+        DeclareLaunchArgument(
+            'nav2_delay', default_value='12.0',
+            description='Seconds to wait for localization before starting Nav2.'),
 
         slam_localization,
         amcl_localization,
-        nav2,
+        delayed_nav2,
     ])
