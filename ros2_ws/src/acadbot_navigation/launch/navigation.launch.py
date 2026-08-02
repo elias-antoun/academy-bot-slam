@@ -61,9 +61,13 @@ def generate_launch_description():
     )
 
     # --- The Nav2 navigation stack (planner, controller, behaviors, BT, ...) ---
+    # Our own bringup rather than nav2_bringup/navigation_launch.py: that one
+    # also starts docking_server and route_server, which this course does not
+    # use and does not configure — and a server that fails to configure makes
+    # the lifecycle manager abort, leaving every other server INACTIVE.
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(pkg_nav2_bringup, 'launch', 'navigation_launch.py')),
+            os.path.join(pkg_nav, 'launch', 'nav2_stack.launch.py')),
         launch_arguments={
             'use_sim_time': use_sim_time,
             'params_file': params_file,

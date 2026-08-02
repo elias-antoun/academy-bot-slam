@@ -1,15 +1,31 @@
 # patrol_waypoints.yaml
 # Waypoints for the patrol_commander, in the 'map' frame, as a flat list of
-# [x, y, yaw] triples. Edit these to match the map you build in Session 2.
+# [x, y, yaw] triples.
+#
+# READ THIS BEFORE EDITING — the map frame is NOT the Gazebo world frame.
+# slam_toolbox puts the map origin wherever the robot was standing when mapping
+# started. AcadBot spawns at Gazebo (-3.0, -2.0), so:
+#
+#       map_x = gazebo_x + 3.0        map_y = gazebo_y + 2.0
+#
+# The room (Gazebo -4..4 by -3..3) is therefore roughly map x 0..7, y 0..5, and
+# the centre divider sits at about map x = 3.5, running from map y = 1.0 up to
+# the north wall. The only way between the two halves is the corridor south of
+# it.  (The previous defaults here were world-frame values like (2, -2); in the
+# map frame those land outside the building and Nav2 rejects every one.)
+#
+# The four defaults below make a loop that crosses the corridor twice — which is
+# exactly the leg Exercise 4.2 wants you to ambush.  If you started the robot
+# somewhere else, read your own coordinates off RViz's "Publish Point" tool.
 patrol_commander:
   ros__parameters:
     use_sim_time: true
     loop: true
     frame_id: "map"
-    # x,    y,    yaw
+    #      x,    y,   yaw
     waypoints: [
-       2.0, -2.0,  0.0,
-       2.0,  2.0,  1.57,
-      -2.0,  2.0,  3.14,
-      -2.0, -2.0, -1.57
+       0.6,  4.2,  0.00,    # NW corner of the left-hand room
+       2.4,  4.2, -1.57,    # left room, nose pointed down toward the corridor
+       5.5,  0.6,  0.00,    # through the corridor, south side of the right room
+       6.2,  4.2,  3.14     # north end of the right-hand room
     ]

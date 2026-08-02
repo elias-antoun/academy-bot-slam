@@ -290,3 +290,36 @@ collision_monitor:
       min_height: 0.15
       max_height: 2.0
       enabled: true
+
+# ----------------------------------------------------------------------------
+# Docking server.
+# ----------------------------------------------------------------------------
+# AcadBot never docks — but Nav2's default bringup (nav2_bringup's
+# navigation_launch.py) starts `docking_server` and lists it in the lifecycle
+# manager.  With no `dock_plugins` entry the server fails to configure, the
+# lifecycle manager aborts the whole bringup, and planner/controller/behavior/
+# bt_navigator all stay INACTIVE — every goal is then rejected with
+# "Goal rejected by Nav2".  A minimal valid plugin keeps the stock bringup
+# happy; nothing in the course uses it.
+docking_server:
+  ros__parameters:
+    use_sim_time: true
+    controller_frequency: 50.0
+    initial_perception_timeout: 5.0
+    wait_charge_timeout: 5.0
+    dock_approach_timeout: 30.0
+    undock_linear_tolerance: 0.05
+    undock_angular_tolerance: 0.1
+    max_retries: 3
+    base_frame: "base_footprint"
+    fixed_frame: "odom"
+    dock_backwards: false
+    dock_prestaging_tolerance: 0.5
+    dock_plugins: ['simple_charging_dock']
+    simple_charging_dock:
+      plugin: 'opennav_docking::SimpleChargingDock'
+      docking_threshold: 0.05
+      staging_x_offset: -0.7
+      use_external_detection_pose: false
+      use_battery_status: false
+      use_stall_detection: false
