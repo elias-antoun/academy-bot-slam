@@ -16,6 +16,8 @@ NOTE: requires a serialized map at
 
 Arguments:
     localization:=slam|amcl   which localizer to run (default slam)
+    nav2_delay:=<seconds>     wait before starting Nav2 (default 12; raise it on
+                              slow machines if controller_server fails to configure)
     headless:=true            Gazebo server only — no GUI, no GPU needed
     rviz:=false               skip RViz2 (no display available, or CI)
 """
@@ -46,7 +48,8 @@ def generate_launch_description():
     nav = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_nav, 'launch', 'navigation.launch.py')),
-        launch_arguments={'localization': localization}.items())
+        launch_arguments={'localization': localization,
+                          'nav2_delay': LaunchConfiguration('nav2_delay')}.items())
 
     rviz = Node(
         package='rviz2', executable='rviz2', name='rviz2',
@@ -58,6 +61,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument('localization', default_value='slam'),
+        DeclareLaunchArgument(
+            'nav2_delay', default_value='12.0',
+            description='Seconds to wait for localization before starting Nav2.'),
         DeclareLaunchArgument(
             'headless', default_value='false',
             description='Run Gazebo server-only (no GUI, no GPU required).'),
