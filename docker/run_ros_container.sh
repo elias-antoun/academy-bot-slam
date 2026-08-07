@@ -33,6 +33,16 @@ if docker info 2>/dev/null | grep -qi nvidia; then
     GPU_ARGS=(--gpus all)
 fi
 
+# Direct Rendering Interface. Without /dev/dri the container's Mesa cannot reach
+# any GPU and RViz2/Gazebo die with "failed to load driver: iris" /
+# "glx: failed to create dri3 screen". On a hybrid-graphics laptop the X server
+# usually renders on the Intel iGPU, which --gpus all does *not* cover.
+# logind puts an ACL for the seat user (uid 1000) on these nodes and the
+# container's 'ros' user is also uid 1000, so no --group-add is needed.
+if [ -d /dev/dri ]; then
+    GPU_ARGS+=(--device /dev/dri)
+fi
+
 # If a container is already running, just attach a new shell to it.
 if [ "$(docker ps -q -f name="^${CONTAINER_NAME}$")" ]; then
     echo "==> Attaching to running container '${CONTAINER_NAME}'"
