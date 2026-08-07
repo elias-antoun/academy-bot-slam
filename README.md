@@ -21,7 +21,7 @@ it gets stuck."
 ## 1. Build the Docker image (once)
 
 ```bash
-cd code/docker
+cd code/academy-bot-slam/docker
 ./build_ros_image.sh          # builds  acadbot:jazzy
 ```
 
@@ -31,7 +31,7 @@ tooling (see `docker/user_install.sh`).
 ## 2. Start a container
 
 ```bash
-cd code/docker
+cd code/academy-bot-slam/docker
 ./run_ros_container.sh        # opens a shell, mounts ../ros2_ws at /ros2_ws
 ```
 
@@ -105,6 +105,10 @@ kick in. Block its path with a chair in RViz's view to trigger them live.
 
 See [`PROJECT.md`](PROJECT.md) for the full architecture, the TF tree, the topic
 graph and the session-by-session learning outcomes.
+
+**Handing in code?** Every homework in the track has a code deliverable, handed
+in as a pull request from your own fork. The workflow — fork, branch, commit,
+PR, review — is in [`CONTRIBUTING.md`](CONTRIBUTING.md). Read it once in week 1.
 
 ---
 
