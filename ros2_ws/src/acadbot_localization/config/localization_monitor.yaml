@@ -1,9 +1,5 @@
 # localization_monitor.yaml — parameters for the AMCL convergence monitor.
-#
-# OWNER: person 2 (together with src/localization_monitor.cpp).
-# The two parameter names below are part of the agreed contract — the launch
-# file passes this whole file through, so do not rename them without telling
-# person 3.
+# Passed through to the node by localization.launch.py.
 localization_monitor:
   ros__parameters:
     use_sim_time: true

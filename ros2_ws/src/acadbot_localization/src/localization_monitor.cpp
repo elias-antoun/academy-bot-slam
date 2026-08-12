@@ -2,23 +2,22 @@
 // ---------------------------------------------------------------------------
 // Session 2 — "is AMCL actually localised, or is it just running?"
 //
-// SKELETON ONLY. This compiles and runs so the rest of the package can be
-// built and launched, but it does not do the job yet.
+// RViz answers that only by eye. This node answers it with a number: it
+// subscribes to /amcl_pose and, on a timer, logs the robot's x, y and yaw
+// alongside AMCL's own estimate of how uncertain that position is.
 //
-// OWNER: person 2 (the C++ node).  What it has to do:
-//   * subscribe to /amcl_pose  (geometry_msgs/msg/PoseWithCovarianceStamped)
-//   * on a timer, log one line: x, y, yaw, and AMCL's uncertainty
-//   * uncertainty = sqrt(max(covariance[0], covariance[7])) in metres
-//       covariance is a row-major 6x6 array: index 0 = variance in x,
-//       index 7 = variance in y
-//   * parameters from config/localization_monitor.yaml:
-//       report_period    (s, default 1.0)  — seconds between log lines
-//       converged_sigma  (m, default 0.25) — CONVERGED below it, SEARCHING above
-//   * before an initial pose is set, AMCL publishes NOTHING at all. Log a
-//     warning saying so rather than printing zeros — that warning is the most
-//     useful line this node produces.
+// The uncertainty comes out of the message's row-major 6x6 covariance, where
+// index 0 is the variance in x and index 7 the variance in y. We report the
+// standard deviation — the square root of the larger of the two — in metres,
+// and label it CONVERGED or SEARCHING against the converged_sigma threshold.
 //
-// Keep it small: a subscriber, a timer, two parameters and a log line.
+// Parameters (config/localization_monitor.yaml):
+//   report_period    seconds between report lines           (default 1.0)
+//   converged_sigma  metres; below it, report CONVERGED      (default 0.25)
+//
+// Before an initial pose is set in RViz, AMCL publishes nothing at all, so
+// there is no pose to report. The node warns about that rather than printing
+// zeros, which would look like a confident estimate at the origin.
 // ---------------------------------------------------------------------------
 #include <memory>
 
