@@ -30,7 +30,7 @@
 class LocalizationMonitor : public rclcpp::Node
 {
 public:
-  LocalizationMonitor() : Node("localization_monitor"), has_received_pose(_false_)
+  LocalizationMonitor() : Node("localization_monitor"), has_received_pose_(false)
   {
     this->declare_parameter<double>("report_period", 1.0);
     this->declare_parameter<double>("converged_sigma", 0.25);

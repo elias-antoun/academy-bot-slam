@@ -11,10 +11,11 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(tf2 REQUIRED)
 
 # ---- localization_monitor: reports whether AMCL has converged ----
 add_executable(localization_monitor src/localization_monitor.cpp)
-ament_target_dependencies(localization_monitor rclcpp geometry_msgs)
+ament_target_dependencies(localization_monitor rclcpp geometry_msgs tf2)
 
 install(TARGETS
   localization_monitor
