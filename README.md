@@ -72,7 +72,8 @@ Session 4 loads the serialized pose graph, not the `.pgm`.
 **Reusing the map you just saved** — AMCL and `map_server` only, without the
 rest of the Nav2 stack:
 ```bash
-ros2 launch acadbot_localization localization.launch.py
+ros2 launch acadbot_localization localization.launch.py   # sim + map + AMCL + RViz + monitor
+ros2 run teleop_twist_keyboard teleop_twist_keyboard      # drive, to watch it converge
 ```
 | argument | default | meaning |
 |---|---|---|
@@ -80,9 +81,13 @@ ros2 launch acadbot_localization localization.launch.py
 | `headless` | `false` | Gazebo server only — no GUI, no GPU |
 | `rviz` | `true` | start RViz2; set `false` on a machine with no display |
 
-AMCL publishes nothing until you give it a starting guess, so set **2D Pose
-Estimate** in RViz; `localization_monitor` prints `SEARCHING` until the pose
-uncertainty falls below its `converged_sigma`, then `CONVERGED`.
+RViz comes up showing your map with the robot in the **wrong place**: AMCL
+publishes nothing at all until you give it a starting guess. Set **2D Pose
+Estimate** and a cloud of pose hypotheses appears around your click; drive a few
+metres along a wall and the cloud tightens onto the true pose.
+`localization_monitor` prints `SEARCHING` while that spread is wider than its
+`converged_sigma`, then `CONVERGED`. Pass `map:=<other>.yaml` to localise
+against a different saved map.
 
 ### Session 3 — Visual SLAM
 The robot already publishes `/camera/image`, `/camera/depth_image` and
