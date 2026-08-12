@@ -74,6 +74,10 @@ rest of the Nav2 stack:
 ```bash
 ros2 launch acadbot_localization localization.launch.py   # sim + map + AMCL + RViz + monitor
 ros2 run teleop_twist_keyboard teleop_twist_keyboard      # drive, to watch it converge
+
+# or name the map explicitly, to localise against a different one:
+ros2 launch acadbot_localization localization.launch.py \
+    map:=/ros2_ws/src/acadbot_navigation/maps/academy_map.yaml
 ```
 | argument | default | meaning |
 |---|---|---|
@@ -86,8 +90,7 @@ publishes nothing at all until you give it a starting guess. Set **2D Pose
 Estimate** and a cloud of pose hypotheses appears around your click; drive a few
 metres along a wall and the cloud tightens onto the true pose.
 `localization_monitor` prints `SEARCHING` while that spread is wider than its
-`converged_sigma`, then `CONVERGED`. Pass `map:=<other>.yaml` to localise
-against a different saved map.
+`converged_sigma`, then `CONVERGED`.
 
 ### Session 3 — Visual SLAM
 The robot already publishes `/camera/image`, `/camera/depth_image` and
