@@ -15,7 +15,7 @@ NOTE: requires a serialized map at
       mapping.launch.py instead and send goals manually in RViz.
 
 Arguments:
-    localization:=slam|amcl   which localizer to run (default slam)
+    localization:=amcl|slam   which localizer to run (default amcl)
     nav2_delay:=<seconds>     wait before starting Nav2 (default 12; raise it on
                               slow machines if controller_server fails to configure)
     headless:=true            Gazebo server only — no GUI, no GPU needed
@@ -60,7 +60,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
-        DeclareLaunchArgument('localization', default_value='slam'),
+        DeclareLaunchArgument('localization', default_value='amcl'),
         DeclareLaunchArgument(
             'nav2_delay', default_value='12.0',
             description='Seconds to wait for localization before starting Nav2.'),

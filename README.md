@@ -66,8 +66,10 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard   # drive to build the map
 ```
 Drive **slowly and in straight lines, and never spin in place** — a stationary
 rotation gives the scan matcher nothing to match and smears the map. When it
-looks good, save it in *both* formats (see `acadbot_navigation/maps/README.md`);
-Session 4 loads the serialized pose graph, not the `.pgm`.
+looks good, save it with `map_saver_cli` (see `acadbot_navigation/maps/README.md`)
+— Sessions 3 and 4 localize with AMCL on that `.yaml`/`.pgm` pair. Serializing
+the pose graph as well is still worth doing if you want to try slam_toolbox's
+own localization mode (`localization:=slam`).
 
 ### Session 3 — Localization on your saved map (AMCL)
 ```bash
@@ -130,7 +132,7 @@ PR, review — is in [`CONTRIBUTING.md`](CONTRIBUTING.md). Read it once in week 
 | `headless:=true` | `simulation`, `mapping`, `localization`, `autonomy` | `false` | Gazebo server only — no GUI, no GPU. Needed for CI and for machines with no working X. |
 | `rviz:=false` | `mapping`, `localization`, `autonomy` | `true` | Skip RViz2 for the same reason. |
 | `map:=<path>` | `localization` | `acadbot_navigation/maps/academy_map.yaml` | Localize on a different saved `.yaml` map. |
-| `localization:=amcl` | `autonomy`, `navigation` | `slam` | Use AMCL + `map_server` on the `.yaml` grid instead of slam_toolbox on the pose graph. |
+| `localization:=slam` | `autonomy`, `navigation` | `amcl` | Use slam_toolbox localization mode on a serialized `.posegraph` instead of AMCL on the `.yaml`/`.pgm` grid. Needs that `.posegraph` saved next to the map. |
 | `nav2_delay:=<sec>` | `autonomy`, `navigation` | `12.0` | How long to wait for localization before starting Nav2. Raise it if you see `Failed to change state for node: controller_server`. |
 
 ## Smoke-testing after a dependency bump

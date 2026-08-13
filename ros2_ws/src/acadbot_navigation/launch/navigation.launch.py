@@ -88,8 +88,11 @@ def generate_launch_description():
         DeclareLaunchArgument('params_file', default_value=default_params),
         DeclareLaunchArgument('map', default_value=default_map),
         DeclareLaunchArgument(
-            'localization', default_value='slam',
-            description="'slam' (slam_toolbox) or 'amcl'"),
+            'localization', default_value='amcl',
+            description="'amcl' (particle filter on the .yaml/.pgm grid map, "
+                        "the default since Session 3) or 'slam' (slam_toolbox "
+                        "localization mode, which needs a serialized "
+                        ".posegraph saved alongside the map)"),
         DeclareLaunchArgument(
             'nav2_delay', default_value='12.0',
             description='Seconds to wait for localization before starting Nav2.'),
