@@ -1,0 +1,35 @@
+# ExecuteDelivery.action
+# Run a delivery that was already booked through the RequestDelivery service.
+#
+# This is an ACTION, not a service, because execution runs for minutes, has
+# something to say the whole time, and has to be interruptible. Those three
+# properties are exactly what an action provides and a service does not.
+#
+# The goal carries only the job_id. Pickup and dropoff poses were resolved and
+# frozen at booking time, so re-sending them here could only ever introduce a
+# disagreement between the job that was accepted and the job that runs.
+
+string job_id
+---
+# ---- Result ----------------------------------------------------------------
+# success is false for every outcome that is not "both legs reached". A
+# delivery reported as succeeded is a delivery that actually happened.
+bool   success
+string job_id
+string message           # human-readable outcome, success or failure
+string failed_leg        # "pickup" or "dropoff"; empty when success is true
+uint8  attempts_used     # total navigate_to_pose goals sent across both legs
+---
+# ---- Feedback --------------------------------------------------------------
+# Published at least once a second for as long as the job runs, on the
+# courier's own timer rather than on Nav2's — a stalled Nav2 must show up as a
+# frozen distance, not as silence.
+uint8 LEG_PICKUP  = 0
+uint8 LEG_DROPOFF = 1
+
+uint8   leg                  # LEG_PICKUP or LEG_DROPOFF
+string  target_location      # the name it is driving to, not its coordinates
+float32 distance_remaining   # metres, as reported by Nav2
+uint8   attempt              # 1-based attempt number on the current leg
+uint16  nav2_recoveries      # recoveries Nav2 has run on this leg so far
+string  state                # NAVIGATING / RETRYING / CANCELING
