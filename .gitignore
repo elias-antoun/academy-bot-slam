@@ -9,6 +9,18 @@ ros2_ws/src/acadbot_navigation/maps/*.yaml
 ros2_ws/src/acadbot_navigation/maps/*.posegraph
 ros2_ws/src/acadbot_navigation/maps/*.data
 
+# --- maps saved from the workspace root by mistake ---
+#     map_saver_cli writes to the current directory, so a save run from
+#     /ros2_ws lands here instead of in acadbot_navigation/maps/.
+ros2_ws/*.pgm
+ros2_ws/*.yaml
+ros2_ws/*.posegraph
+ros2_ws/*.data
+
+# --- tf2_tools view_frames dumps (written to the current directory) ---
+frames_*.gv
+frames_*.pdf
+
 # --- python / venv (slide generator etc.) ---
 __pycache__/
 *.pyc
@@ -20,3 +32,4 @@ env/
 *.swp
 *~
 .DS_Store
+.vscode/
