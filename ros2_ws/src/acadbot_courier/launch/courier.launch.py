@@ -5,7 +5,7 @@
 
 Brings up, in this order:
   1. the simulation (Gazebo + the ros_gz bridge)
-  2. map_server + AMCL on the saved map, seeding themselves
+  2. map_server + AMCL on the saved map, seeded with the robot's spawn pose
   3. the Nav2 servers, held back until localization is up
   4. RViz, showing the map, the costmaps and the courier's locations
   5. courier_server itself
@@ -19,14 +19,15 @@ Then, in another terminal:
 
 Two things about the ordering are not arbitrary.
 
-AMCL seeds itself from `set_initial_pose` in config/amcl.yaml rather than
-waiting for a 2D Pose Estimate click in RViz. "One command" cannot mean "one
-command and then go and click something".
+AMCL is seeded by publishing /initialpose on a timer, not by its
+set_initial_pose parameter -- see config/amcl.yaml for why that parameter
+cannot work under simulated time. Localization itself starts immediately, so
+AMCL's TF buffer has the whole startup to fill before the pose arrives.
 
-Nav2 is delayed while localization is not. The global costmap cannot configure
-without map->odom, and if a lifecycle transition times out the manager aborts
-the whole bringup and leaves every server INACTIVE -- at which point every goal
-comes back "rejected". Starting the two together reproduces exactly that.
+Nav2 is delayed until after the seed. Its costmaps cannot configure without
+map->odom, and if that transition times out the lifecycle manager aborts the
+whole bringup and leaves every server INACTIVE, after which every goal comes
+back "rejected".
 
 This composes the stack itself rather than including acadbot_bringup's
 autonomy.launch.py, which does not forward params_file: AMCL here needs the
@@ -37,6 +38,7 @@ Arguments:
     headless:=true    Gazebo server only — no GUI, no GPU needed
     rviz:=false       skip RViz2
     map:=<path>       localize on a different saved map
+    initial_x/initial_y/initial_yaw   where the robot starts, in the map frame
     nav2_delay:=<s>   seconds to wait for localization before starting Nav2
 """
 import os
@@ -71,8 +73,16 @@ def generate_launch_description():
         launch_arguments={'headless': headless}.items(),
     )
 
-    # map_server + AMCL + their lifecycle manager. Not delayed: AMCL has to be
-    # publishing map->odom before the Nav2 costmaps try to configure.
+    # map_server + AMCL + their lifecycle manager, started with the
+    # simulation and not after it. AMCL keeps its own TF buffer, and that
+    # buffer only starts filling when the node does -- start it late and the
+    # buffer holds a single sample, so an initial pose arriving moments later
+    # cannot be transformed at all:
+    #
+    #   Requested time 20.243 but the earliest data is at time 20.400
+    #
+    # Starting it here gives the buffer the whole startup to fill before the
+    # pose is seeded below.
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_nav2_bringup, 'launch', 'localization_launch.py')),
@@ -81,6 +91,28 @@ def generate_launch_description():
             'use_sim_time': 'true',
             'params_file': amcl_params,
         }.items(),
+    )
+
+    # Tell AMCL where the robot starts, so the demo needs no mouse.
+    #
+    # A node rather than a `ros2 topic pub` on a timer, because publishing once
+    # at a fixed moment is unreliable: AMCL looks up base_footprint->odom
+    # around the pose's timestamp, and early in a run its TF buffer holds only
+    # a fraction of a second, so the pose lands outside it. When the window
+    # opens depends on the machine. The seeder publishes, checks whether
+    # map->odom actually appeared, and repeats until it has -- so there is no
+    # delay to guess at. It also leaves an already-localized robot alone.
+    seeder = Node(
+        package='acadbot_courier',
+        executable='initial_pose_seeder',
+        name='initial_pose_seeder',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'initial_x': LaunchConfiguration('initial_x'),
+            'initial_y': LaunchConfiguration('initial_y'),
+            'initial_yaw': LaunchConfiguration('initial_yaw'),
+        }],
     )
 
     # The course's own Nav2 bringup, with the course's own parameters: nothing
@@ -125,10 +157,18 @@ def generate_launch_description():
             'rviz', default_value='true',
             description='Start RViz2. Set false on a machine with no display.'),
         DeclareLaunchArgument(
-            'nav2_delay', default_value='12.0',
+            'initial_x', default_value='0.0',
+            description="AMCL's starting guess, in the map frame. The default "
+                        'is where the robot spawns: map = gazebo + (3, 2), and '
+                        'simulation.launch.py spawns it at gazebo (-3, -2).'),
+        DeclareLaunchArgument('initial_y', default_value='0.0'),
+        DeclareLaunchArgument('initial_yaw', default_value='0.0'),
+        DeclareLaunchArgument(
+            'nav2_delay', default_value='15.0',
             description='Seconds to wait for localization before starting Nav2.'),
         sim,
         localization,
+        seeder,
         delayed_nav2,
         courier,
         rviz,
