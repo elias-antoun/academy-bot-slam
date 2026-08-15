@@ -9,10 +9,8 @@
 //
 //     locations:
 //       names: ["reception", "lab_bench"]
-//       reception:
-//         x: 0.60
-//         y: 4.20
-//         yaw: 0.00
+//       reception: [0.60, 4.20, 0.00]     # x, y, yaw
+//       lab_bench: [4.50, 4.20, 3.14]
 //
 // The names are listed separately rather than discovered because ROS 2
 // parameters have no map type -- that list is what tells us which groups to
@@ -39,9 +37,10 @@ public:
   /// Declare and read every location parameter on `node`.
   ///
   /// Throws std::runtime_error if the table is absent, empty, names the same
-  /// location twice, or lists a name with no pose behind it. All four are
-  /// configuration mistakes, and a configuration mistake should stop the node
-  /// at startup rather than surface as a failed delivery mid-demo.
+  /// location twice, or lists a name whose pose is missing or is not exactly
+  /// three numbers. All of them are configuration mistakes, and a
+  /// configuration mistake should stop the node at startup rather than
+  /// surface as a failed delivery mid-demo.
   static LocationTable from_parameters(rclcpp::Node & node);
 
   /// The pose for `name`, or nothing if no such location is configured.

@@ -41,22 +41,26 @@ LocationTable LocationTable::from_parameters(rclcpp::Node & node)
         "location '" + name + "' is listed twice in locations.names.");
     }
 
-    const std::string prefix = "locations." + name + ".";
+    const std::string key = "locations." + name;
+    std::vector<double> xyyaw;
     try {
-      // One field at a time rather than a braced initialiser, so the error
-      // says which field is missing and the order of evaluation is not
-      // something the reader has to think about.
-      const double x = node.declare_parameter<double>(prefix + "x");
-      const double y = node.declare_parameter<double>(prefix + "y");
-      const double yaw = node.declare_parameter<double>(prefix + "yaw");
-      table.poses_.emplace(name, Pose2D{x, y, yaw});
-    } catch (const MissingParameter & e) {
-      // Defaulting a missing coordinate to zero would put the location at the
-      // map origin -- a real place, which the robot would happily drive to.
+      xyyaw = node.declare_parameter<std::vector<double>>(key);
+    } catch (const MissingParameter &) {
       throw std::runtime_error(
-        "location '" + name + "' is listed in locations.names but is missing "
-        "an x, y or yaw: " + e.what());
+        "location '" + name + "' is listed in locations.names but has no "
+        "[x, y, yaw] behind it.");
     }
+
+    // Refused rather than skipped. A short list is a typo, and skipping it
+    // would surface an hour later as "unknown location" pointing at the
+    // service handler instead of at the missing number.
+    if (xyyaw.size() != 3) {
+      throw std::runtime_error(
+        "location '" + name + "' needs exactly 3 numbers [x, y, yaw], got " +
+        std::to_string(xyyaw.size()) + ".");
+    }
+
+    table.poses_.emplace(name, Pose2D{xyyaw[0], xyyaw[1], xyyaw[2]});
   }
 
   return table;
