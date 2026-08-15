@@ -114,7 +114,11 @@ private:
   // ---- helpers ----------------------------------------------------------
   geometry_msgs::msg::PoseStamped to_goal_pose(const Pose2D & pose) const;
   Job & current_job();
-  static const char * to_string(Phase phase);
+
+  /// Not named to_string: a member of that name would hide the free
+  /// to_string(Leg) and to_string(JobState) from types.hpp, and every call to
+  /// those inside this class would need qualifying.
+  static const char * phase_name(Phase phase);
 
   // ---- configuration (all from YAML) ------------------------------------
   std::string goal_frame_;
