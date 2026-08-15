@@ -1,0 +1,46 @@
+# courier.yaml
+# Everything the courier is allowed to know about the building and about its
+# own limits. Nothing here is compiled into the node.
+#
+# COORDINATES ARE IN THE MAP FRAME, NOT THE GAZEBO WORLD FRAME.
+# The map origin is wherever the robot stood when Session 2 mapping started,
+# which is its spawn point at Gazebo (-3, -2). So map = gazebo + (3, 2), and
+# the room spans roughly map x -1..7, y -1..5 with the divider at x = 3.5
+# running from y = 1.0 up to the north wall. The only way between the two
+# halves is the corridor south of it.
+#
+# Read your own coordinates off RViz's Publish Point rather than guessing, and
+# keep a location at least the costmap inflation_radius (0.45 m) clear of any
+# wall or obstacle -- closer than that and Nav2 spends its time fighting the
+# goal instead of driving to it.
+
+courier_server:
+  ros__parameters:
+    use_sim_time: true
+
+    goal_frame: "map"
+
+    # Retries are counted per leg, so a job may attempt each of pickup and
+    # dropoff this many times over before it is called a failure.
+    max_retries: 2
+    retry_delay: 3.0        # s, between attempts on the same leg
+    feedback_period: 0.5    # s; the action promises feedback at least once a second
+    leg_timeout: 120.0      # s, before an attempt is abandoned and retried
+
+    # x, y, yaw
+    #
+    # reception and storage were driven to and reached with no recoveries.
+    # lab_bench and charging_dock are NOT where they started out:
+    #   lab_bench was at (6.20, 4.20) and aborted every time -- reaching that
+    #     corner means threading the gap between obstacle_2 and the east wall,
+    #     1.125 m wide but only ~0.22 m of it outside the inflation band,
+    #     against a robot that needs 0.40 m. It now sits west of the cylinder.
+    #   charging_dock was at (0.50, 0.50), a quarter of a metre from the edge
+    #     of obstacle_1, and cost four recoveries every visit.
+    # reception -> lab_bench still crosses the corridor, which is the leg the
+    # blockage demo depends on.
+    locations:
+      reception:     [0.60, 4.20,  0.00]
+      lab_bench:     [4.50, 4.20,  3.14]
+      storage:       [5.50, 0.60,  0.00]
+      charging_dock: [0.50, 2.00, -1.57]
