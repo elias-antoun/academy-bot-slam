@@ -8,13 +8,12 @@
 // not a rebuild.
 //
 //     locations:
-//       names: ["reception", "lab_bench"]
 //       reception: [0.60, 4.20, 0.00]     # x, y, yaw
 //       lab_bench: [4.50, 4.20, 3.14]
 //
-// The names are listed separately rather than discovered because ROS 2
-// parameters have no map type -- that list is what tells us which groups to
-// go looking for.
+// A location exists by being written down, and nothing else. The names are
+// read from the parameter overrides rather than from a second list, so there
+// is no list to fall out of step with the poses.
 // ---------------------------------------------------------------------------
 #ifndef ACADBOT_COURIER__LOCATION_TABLE_HPP_
 #define ACADBOT_COURIER__LOCATION_TABLE_HPP_
@@ -22,7 +21,6 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -36,9 +34,8 @@ class LocationTable
 public:
   /// Declare and read every location parameter on `node`.
   ///
-  /// Throws std::runtime_error if the table is absent, empty, names the same
-  /// location twice, or lists a name whose pose is missing or is not exactly
-  /// three numbers. All of them are configuration mistakes, and a
+  /// Throws std::runtime_error if no location is configured, or if one is not
+  /// a list of exactly three numbers. Both are configuration mistakes, and a
   /// configuration mistake should stop the node at startup rather than
   /// surface as a failed delivery mid-demo.
   static LocationTable from_parameters(rclcpp::Node & node);
@@ -46,19 +43,18 @@ public:
   /// The pose for `name`, or nothing if no such location is configured.
   std::optional<Pose2D> find(const std::string & name) const;
 
-  /// The configured names as "reception, lab_bench, storage", in the order
-  /// they were declared. Goes into the rejection reason, so a mistyped
-  /// location tells the requester what they could have said instead.
+  /// The configured names as "lab_bench, reception, storage". Goes into the
+  /// rejection reason, so a mistyped location tells the requester what they
+  /// could have said instead.
   std::string known_names() const;
 
   /// Every location, for drawing the markers.
   const std::map<std::string, Pose2D> & all() const { return poses_; }
 
-  std::size_t size() const { return names_.size(); }
+  std::size_t size() const { return poses_.size(); }
 
 private:
-  std::vector<std::string> names_;          // declaration order, for messages
-  std::map<std::string, Pose2D> poses_;     // lookup
+  std::map<std::string, Pose2D> poses_;
 };
 
 }  // namespace acadbot_courier
