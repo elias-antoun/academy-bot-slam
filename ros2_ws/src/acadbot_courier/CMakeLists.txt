@@ -32,7 +32,7 @@ ament_target_dependencies(courier_server
 install(TARGETS courier_server
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY config
+install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME})
 
 ament_package()
