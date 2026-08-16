@@ -17,6 +17,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
 # ---- courier_server (RequestDelivery service + ExecuteDelivery action + Nav2 client) ----
@@ -33,7 +34,7 @@ ament_target_dependencies(courier_server
 # ---- initial_pose_seeder (tells AMCL where the robot starts) ----
 add_executable(initial_pose_seeder src/initial_pose_seeder.cpp)
 ament_target_dependencies(initial_pose_seeder
-  rclcpp geometry_msgs tf2 tf2_geometry_msgs tf2_ros)
+  rclcpp geometry_msgs sensor_msgs tf2 tf2_geometry_msgs tf2_ros)
 
 install(TARGETS courier_server initial_pose_seeder
   DESTINATION lib/${PROJECT_NAME})

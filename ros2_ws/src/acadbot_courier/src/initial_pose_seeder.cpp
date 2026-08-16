@@ -32,6 +32,7 @@
 #include "rclcpp/rclcpp.hpp"
 
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/buffer.h"
@@ -55,12 +56,22 @@ public:
     odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_footprint");
     check_period_ = declare_parameter<double>("check_period", 1.0);
+    confirmations_ = declare_parameter<int>("confirmations", 3);
+    min_scans_ = declare_parameter<int>("min_scans", 5);
+    scan_topic_ = declare_parameter<std::string>("scan_topic", "/scan");
     give_up_after_ = declare_parameter<double>("give_up_after", 90.0);
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this);
 
     pose_pub_ = create_publisher<PoseWithCovarianceStamped>("/initialpose", 10);
+
+    // AMCL only publishes map->odom off the back of a filter update, and a
+    // filter update needs a scan. Seed before the laser is running and it
+    // accepts the pose, emits a transform briefly, and then goes quiet.
+    scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+      scan_topic_, rclcpp::SensorDataQoS(),
+      [this](const sensor_msgs::msg::LaserScan::SharedPtr) {++scans_seen_;});
 
     started_ = now();
     timer_ = create_wall_timer(
@@ -73,18 +84,41 @@ public:
   }
 
 private:
-  /// Is AMCL localized? map->odom existing is the only proof that matters --
-  /// AMCL publishes it and nothing else does.
-  bool localized() const
+  /// Is AMCL *still* publishing map->odom?
+  ///
+  /// Three weaker versions of this check were wrong in the same way. Asking
+  /// whether the transform exists fails because tf2 caches for ten seconds
+  /// and TimePointZero returns the latest available, so a transform AMCL
+  /// emitted once and abandoned keeps answering yes. Asking how old it is
+  /// fails too: the age is measured in simulated time, which barely advances
+  /// while Gazebo is starting -- precisely the window this has to police.
+  ///
+  /// So ask neither. A stamp that keeps changing means AMCL is still
+  /// publishing; a stamp frozen at the value it had last second means it has
+  /// stopped. That holds whatever the clock is doing.
+  bool transform_advancing()
   {
-    return tf_buffer_->canTransform(map_frame_, odom_frame_, tf2::TimePointZero);
+    try {
+      const auto tf =
+        tf_buffer_->lookupTransform(map_frame_, odom_frame_, tf2::TimePointZero);
+      const rclcpp::Time stamp(tf.header.stamp);
+      const bool advancing = have_stamp_ && stamp > last_stamp_;
+      last_stamp_ = stamp;
+      have_stamp_ = true;
+      return advancing;
+    } catch (const tf2::TransformException &) {
+      have_stamp_ = false;
+      return false;
+    }
   }
 
   /// AMCL needs this to place the pose; before it exists there is no point
   /// publishing at all.
-  bool odometry_alive() const
+  bool odometry_alive()
   {
-    return tf_buffer_->canTransform(odom_frame_, base_frame_, tf2::TimePointZero);
+    std::string ignored;
+    return tf_buffer_->canTransform(
+      odom_frame_, base_frame_, tf2::TimePointZero, &ignored);
   }
 
   void finish(const char * why)
@@ -96,17 +130,24 @@ private:
 
   void tick()
   {
-    if (localized()) {
+    if (transform_advancing()) {
       if (attempts_ == 0) {
-        finish("map->odom already exists: something has already set a pose, "
-               "so nothing to do.");
-      } else {
+        finish("map->odom is already advancing: something has set a pose "
+               "already, so nothing to do.");
+        return;
+      }
+      // Confirmed more than once on purpose. A pose accepted before AMCL is
+      // really running produces a transform that appears and then stops;
+      // one check of a thing that flickers is not a check.
+      if (++confirmed_ >= confirmations_) {
         RCLCPP_INFO(get_logger(),
-          "map->odom is up after %d attempt(s); AMCL is localized.", attempts_);
+          "map->odom advancing for %d checks after %d attempt(s); localized.",
+          confirmed_, attempts_);
         finish("done.");
       }
       return;
     }
+    confirmed_ = 0;
 
     if ((now() - started_).seconds() > give_up_after_) {
       RCLCPP_ERROR(get_logger(),
@@ -121,6 +162,14 @@ private:
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
         "waiting for %s->%s before seeding...",
         odom_frame_.c_str(), base_frame_.c_str());
+      return;
+    }
+
+    if (scans_seen_ < min_scans_) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+        "waiting for %s to stream (%d/%d scans): AMCL cannot update its "
+        "filter, and so cannot hold map->odom, until it is seeing the world.",
+        scan_topic_.c_str(), scans_seen_, min_scans_);
       return;
     }
 
@@ -158,13 +207,21 @@ private:
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Publisher<PoseWithCovarianceStamped>::SharedPtr pose_pub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   double x_, y_, yaw_;
   std::string map_frame_, odom_frame_, base_frame_;
   double check_period_, give_up_after_;
+  std::string scan_topic_;
+  int confirmations_{3};
+  int min_scans_{5};
+  rclcpp::Time last_stamp_{0, 0, RCL_ROS_TIME};
+  bool have_stamp_{false};
   rclcpp::Time started_;
   int attempts_{0};
+  int confirmed_{0};
+  int scans_seen_{0};
 };
 
 }  // namespace acadbot_courier
