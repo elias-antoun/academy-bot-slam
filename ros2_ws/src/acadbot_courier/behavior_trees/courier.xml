@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<!--
+courier.xml -- the delivery mission, as a behaviour tree.
+
+This is the bonus implementation. It replaces the leg loop inside
+courier_server.cpp -- send a goal, time it out, retry it, move to the next leg
+-- and nothing else. Booking, the action interface, the Nav2 client and the
+feedback are the same in both versions; courier_bt_server.cpp runs this file
+instead of the hand-written state machine.
+
+Everything the tree needs is on the blackboard before the first tick, written
+by the node from the frozen job and from courier.yaml:
+
+    pickup_pose, dropoff_pose     Pose2D, resolved when the job was booked
+    pickup_name, dropoff_name     string, for the feedback message
+    max_attempts                  int,   max_retries + 1
+    leg_timeout_msec              int,   leg_timeout * 1000
+    retry_delay_msec              int,   retry_delay * 1000
+
+The poses are on the blackboard rather than the names because a job's targets
+are frozen at booking time. Looking a name up again here would let an edit to
+courier.yaml move the destination of a delivery that had already been accepted.
+
+Only GoToLocation is ours. Sequence, RetryUntilSuccessful, Fallback, Timeout,
+Delay and AlwaysFailure are BehaviorTree.CPP built-ins, and between them they
+are the whole reason to do this: they are the retry counter, the timeout timer
+and the leg ordering that the state machine spells out by hand.
+
+The two legs are written out rather than factored into a SubTree. It is eight
+more lines and it means the entire mission is readable in one screen, which is
+the property that makes a tree worth having.
+-->
+<root BTCPP_format="4" main_tree_to_execute="CourierDelivery">
+
+  <BehaviorTree ID="CourierDelivery">
+    <Sequence name="delivery">
+
+      <!-- Leg 1: drive to the pickup.
+           Sequence is what makes this a delivery rather than two errands: if
+           the pickup fails the dropoff is never attempted, and the job ends
+           reporting failed_leg "pickup". -->
+      <RetryUntilSuccessful num_attempts="{max_attempts}" name="pickup_attempts">
+        <Fallback>
+          <Timeout msec="{leg_timeout_msec}">
+            <GoToLocation pose="{pickup_pose}" name="{pickup_name}" leg="pickup"/>
+          </Timeout>
+
+          <!-- Reached only when the attempt above failed or timed out. Waits
+               retry_delay, then fails, which sends RetryUntilSuccessful round
+               again. The delay belongs here and not in front of the attempt:
+               a Delay wrapping GoToLocation would also postpone the first try,
+               and every delivery would start three seconds late. -->
+          <Delay delay_msec="{retry_delay_msec}">
+            <AlwaysFailure/>
+          </Delay>
+        </Fallback>
+      </RetryUntilSuccessful>
+
+      <!-- Leg 2: drive to the dropoff. Identical but for the target. -->
+      <RetryUntilSuccessful num_attempts="{max_attempts}" name="dropoff_attempts">
+        <Fallback>
+          <Timeout msec="{leg_timeout_msec}">
+            <GoToLocation pose="{dropoff_pose}" name="{dropoff_name}" leg="dropoff"/>
+          </Timeout>
+          <Delay delay_msec="{retry_delay_msec}">
+            <AlwaysFailure/>
+          </Delay>
+        </Fallback>
+      </RetryUntilSuccessful>
+
+    </Sequence>
+  </BehaviorTree>
+
+</root>
