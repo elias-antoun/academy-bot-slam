@@ -21,6 +21,9 @@ ros2_ws/*.data
 frames_*.gv
 frames_*.pdf
 
+# --- reference docs from another project, kept only as a style guide ---
+docs/samples/
+
 # --- local coursework: briefs, past homework, evidence screenshots ---
 #     Not part of any code deliverable; kept out so a PR diff contains only
 #     the change it is meant to contain.

@@ -1,0 +1,516 @@
+# What we are actually doing
+
+Background for the **AcadBot Courier** final project.
+[`REPORT.md`](REPORT.md) is the report — *what was built, what it measured, and what broke*;
+[`COMPONENTS.md`](COMPONENTS.md) is the piece-by-piece reference. This document covers *what
+any of it means*.
+
+It assumes you have written a ROS 2 publisher and subscriber before, and nothing else. Every
+section points at the code that implements it.
+
+---
+
+## 1. The problem, stated precisely
+
+A courier robot has to answer one question repeatedly: **"how do I get from here to there?"**
+That decomposes into three questions that are genuinely different, and confusing them is the
+main way beginners get stuck.
+
+1. **Where am I?** — *localization*. The robot has a map. It does not know where on that map
+   it is standing.
+2. **How do I get to the goal?** — *planning*. Given where I am and where I want to be, draw
+   a route that avoids walls.
+3. **What do I do in the next 50 milliseconds?** — *control*. Given the route, what wheel
+   speeds keep me on it, right now, without hitting the chair that just appeared.
+
+Nav2 answers all three. **This project answers none of them.** The brief is explicit:
+
+> Under the hood your code is a `navigate_to_pose` action client. You do not write a planner
+> or a controller.
+
+What this project builds is the layer *above* those three — the part that decides **which
+goals to send, in what order, what to do when one fails, and how to tell a human what is
+happening.** That layer is called *mission control*, and it is where a delivery robot stops
+being a demo and starts being a product.
+
+So the function we implement is roughly:
+
+```
+book(pickup_name, dropoff_name)  ->  job_id | refusal
+run(job_id)                      ->  drive to pickup, then to dropoff
+                                     ...reporting continuously
+                                     ...retrying honestly
+                                     ...stopping if asked
+                                     -> SUCCEEDED | ABORTED | CANCELED
+```
+
+Everything below is the vocabulary needed to understand that one page.
+
+---
+
+## 2. Frames, transforms, and TF
+
+A robot juggles many coordinate systems at once. The LiDAR reports distances *from the LiDAR*.
+The map is drawn *from the map's corner*. The wheels measure motion *from wherever the robot
+switched on*. Getting a number from one of those into another is a **transform**, and ROS 2
+has a subsystem devoted to nothing else: **TF** (`tf2`).
+
+A **frame** is a named coordinate system. A **transform** is the translation and rotation that
+takes coordinates in one frame into another. TF stores a *tree* of them, timestamped, and
+answers questions like *"where was the LiDAR, in map coordinates, 0.3 seconds ago?"*
+
+AcadBot's tree, from [`PROJECT.md`](../PROJECT.md):
+
+```
+map ──(AMCL)──► odom ──(diff_drive)──► base_footprint ──► base_link ──► lidar_link
+                                                                    ──► camera_link
+                                                                    ──► imu_link
+```
+
+Three of these matter, and **the reason there are three is the single most important idea in
+this section.**
+
+### 2.1 `base_footprint` — the robot
+
+Where the robot is, projected onto the floor. Everything bolted to the robot (`lidar_link`,
+`camera_link`) hangs off it with a **static** transform: the LiDAR never moves relative to
+the chassis, so that transform is published once and never changes.
+
+### 2.2 `odom` — smooth, continuous, and wrong
+
+The `odom → base_footprint` transform comes from **wheel odometry**: count wheel rotations,
+integrate, and you get a position. In AcadBot it comes from the Gazebo `DiffDrive` plugin
+(see [`gazebo_control.xacro`](../ros2_ws/src/acadbot_description/urdf/gazebo_control.xacro)).
+
+Odometry has one wonderful property and one fatal flaw.
+
+- **Wonderful:** it is smooth and continuous. It never jumps. Ask twice in a row and you get
+  two nearly-identical answers. Controllers need that.
+- **Fatal:** it **drifts**. Wheels slip, radii are never exactly what you typed, and every
+  small error is *integrated* — added to a running total that never gets corrected. Error
+  grows without bound.
+
+Session 1 of this course measures exactly this: drive a 2 m square twice, open-loop, and see
+how far the estimate has wandered. The measured result was **2.35 m of position error and
+37.6° of heading error after two laps** — on a path only 16 m long.
+
+### 2.3 `map` — correct, but jumpy
+
+The `map → odom` transform is the **correction**. Something looks at the world, works out
+where the robot *really* is, and publishes the difference between truth and what odometry
+believes.
+
+That correction jumps. When the localizer suddenly realises the robot is 30 cm further left
+than it thought, `map → odom` snaps. Planners can cope with that; controllers cannot.
+
+**This is why there are two frames instead of one.** Nav2's local costmap and controller work
+in `odom` — smooth, no jumps, locally accurate. The global costmap and planner work in `map` —
+globally correct, occasional jumps. Each layer gets the property it needs.
+
+> **The single most common failure in this whole project** was `map → odom` not existing.
+> Without it the global costmap cannot configure, the Nav2 lifecycle manager times out and
+> aborts the entire bringup, and every goal afterwards is rejected. The symptom appears three
+> layers away from the cause. See [`REPORT.md` §8](REPORT.md).
+
+---
+
+## 3. Maps: what an occupancy grid actually is
+
+The map AcadBot navigates is an **occupancy grid** — a bitmap where each pixel is one square
+of floor. `academy_map.pgm` is 160 × 120 pixels at `resolution: 0.050`, so each pixel is
+5 cm × 5 cm and the whole map covers 8.0 m × 6.0 m.
+
+Each cell holds one of three states:
+
+| state | meaning | how it got that way |
+|---|---|---|
+| **free** (white) | a LiDAR beam passed *through* and terminated beyond | observed empty |
+| **occupied** (black) | a beam *stopped* here | observed a surface |
+| **unknown** (grey) | no beam ever reached it | never observed, or *occluded* |
+
+The third one is worth dwelling on. Grey does not mean "empty". It means "no information". The
+interior of a wall is grey — the LiDAR sees the near face from each side and nothing in
+between. So is the inside of a pillar the robot drove all the way around.
+
+The `.yaml` beside the `.pgm` carries the metadata:
+
+```yaml
+image: academy_map.pgm
+resolution: 0.050
+origin: [-1.054, -1.009, 0]   # where the image's bottom-left corner sits in the map frame
+occupied_thresh: 0.65
+free_thresh: 0.196
+```
+
+`origin` matters more than it looks. **The map frame's `(0,0)` is wherever the robot was
+standing when mapping began**, not the corner of the image and not the origin of the
+simulation. For AcadBot, mapping started at the spawn point at Gazebo `(-3, -2)`, so:
+
+```
+map_x = gazebo_x + 3      map_y = gazebo_y + 2
+```
+
+Every coordinate in [`courier.yaml`](../ros2_ws/src/acadbot_courier/config/courier.yaml) is in
+the map frame. Mixing the two frames puts your locations outside the building, and Nav2
+rejects every one of them. This is a genuine trap — the course's own
+`patrol_waypoints.yaml` carries stale world-frame defaults for exactly this reason.
+
+---
+
+## 4. Localization: AMCL and the particle filter
+
+**SLAM** (Simultaneous Localization and Mapping) builds a map while figuring out where you are
+— that is Session 2, `slam_toolbox`. **Localization** is the easier half: the map already
+exists, and you only need to find yourself in it. That is what a courier does, and the tool is
+**AMCL** — Adaptive Monte Carlo Localization.
+
+### 4.1 How it works, in four steps
+
+AMCL maintains a cloud of **particles**. Each particle is a guess: *"maybe the robot is here,
+facing this way."* Typically 500–2000 of them ([`amcl.yaml`](../ros2_ws/src/acadbot_courier/config/amcl.yaml)
+sets `min_particles: 500`, `max_particles: 2000`).
+
+1. **Predict.** The robot moves. Every particle is moved by the same odometry delta, plus
+   noise — because odometry is not trusted. The noise magnitudes are `alpha1`…`alpha4`, all
+   `0.2` here. The cloud *spreads*.
+2. **Weight.** A laser scan arrives. For each particle, ask: *"if the robot really were here,
+   what would the LiDAR see?"* Compare against the map. Particles whose predicted view matches
+   the real scan get high weight; particles that predict a wall where the scan shows open
+   floor get almost none.
+3. **Resample.** Draw a new particle set, choosing in proportion to weight. Good guesses
+   breed; bad guesses die. The cloud *tightens* around the truth.
+4. **Publish.** The weighted mean of the cloud is the pose estimate. AMCL publishes the
+   `map → odom` correction that makes it consistent.
+
+The "adaptive" part is that the particle count shrinks when the filter is confident and grows
+when it is lost.
+
+### 4.2 Why it needs to be told where to start
+
+AMCL is handed a map it did not build and asked where the robot is *inside* it — a question
+with exactly one right answer. It **deliberately does not guess**: `nav2_params.yaml` sets no
+initial pose, so AMCL publishes nothing at all until somebody tells it.
+
+That default is reasonable arithmetic. 2000 particles spread over 48 m² of floor **and** 360°
+of heading is very thin coverage. Seeding the cloud around a known starting point puts every
+particle somewhere useful.
+
+In Sessions 3 and 4 a human supplies it by clicking **2D Pose Estimate** in RViz. Requirement 9
+of this project says *one command brings it up*, which means doing that without the mouse —
+and that turned out to be the single hardest part of the project. See
+[`initial_pose_seeder.cpp`](../ros2_ws/src/acadbot_courier/src/initial_pose_seeder.cpp) and
+[`REPORT.md` §8.2](REPORT.md).
+
+### 4.3 Measuring convergence
+
+The uncertainty lives in the covariance matrix of `/amcl_pose`. The position standard
+deviation is
+
+```cpp
+const double sigma = std::sqrt(std::max({c[0], c[7], 0.0}));   // var(x), var(y)
+```
+
+from the course's [`localization_monitor.cpp`](../ros2_ws/src/acadbot_localization/src/localization_monitor.cpp).
+Below ~0.25 m the filter is considered converged. Watching sigma fall from 0.43 m to 0.22 m as
+the robot drives is the cloud tightening, made numeric.
+
+---
+
+## 5. Costmaps: how a map becomes a thing you can plan on
+
+You cannot plan directly on an occupancy grid, because a robot is not a point. A corridor
+80 cm wide is impassable for a 60 cm robot even though every cell in the middle is "free".
+
+A **costmap** solves this by giving every cell a cost from 0 to 254, built in **layers**:
+
+| layer | contributes |
+|---|---|
+| **static** | the saved map — walls that are always there |
+| **obstacle** | live LiDAR returns — the chair someone just put down |
+| **inflation** | a computed halo of decreasing cost around every obstacle |
+
+**Inflation is the layer that matters most for this project.** Around each occupied cell it
+paints a gradient out to `inflation_radius` (0.45 m in `nav2_params.yaml`), highest against
+the obstacle and decaying outward. Planners are then free to treat the robot as a *point* and
+simply avoid high cost — the inflation has already accounted for its size.
+
+Two consequences that cost this project real time:
+
+- **A goal inside the inflation band is expensive or unreachable.** `lab_bench` was originally
+  placed at map `(6.20, 4.20)`, where the gap between a cylinder and the east wall is 1.125 m
+  wide — but 0.45 m of inflation from each side leaves only ~0.22 m clear, against a robot
+  needing 0.40 m. Every delivery there aborted.
+- **A robot that gets *into* the band cannot plan its way out.** The planner fails on its own
+  start pose. Observed exactly: `GridBased plugin failed to plan from (3.25, 0.90)` — that
+  robot was 0.175 m from a wall with a 0.20 m footprint radius, i.e. inside it.
+
+Nav2 keeps two costmaps: a **global** one (whole map, `map` frame, for the planner) and a
+**local** one (a 4 × 4 m rolling window, `odom` frame, for the controller). Recall §2.3 —
+each gets the frame whose properties it needs.
+
+---
+
+## 6. Planning versus control
+
+These are two different jobs done by two different servers, and blaming the wrong one wastes
+hours.
+
+**The planner** (`planner_server`, running `navfn` here) draws a route from A to B across the
+global costmap. It is a graph search — Dijkstra by default, A\* optionally. It runs
+occasionally, thinks globally, and knows nothing about wheels.
+
+**The controller** (`controller_server`, running **DWB**) turns that route into velocity
+commands at 20 Hz. DWB stands for Dynamic Window Approach: each cycle it samples many
+achievable `(v, ω)` pairs, simulates each forward ~1.7 s, scores the resulting trajectories
+with a set of **critics**, and publishes the best one.
+
+The critics and their weights are the controller's personality:
+
+```yaml
+critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
+          "PathAlign", "PathDist", "GoalDist"]
+BaseObstacle.scale: 0.02      # how much it cares about being near obstacles
+PathAlign.scale: 32.0         # how much it cares about following the route
+PathDist.scale: 32.0
+```
+
+Read those numbers: **path-following is weighted 1600× more than obstacle proximity.** DWB as
+configured will hug a wall to stay on its line. That is the direct cause of the one route this
+project could not make work — see [`REPORT.md` §10.2](REPORT.md).
+
+### 6.1 Recovery behaviours
+
+When planning or control fails, Nav2's behaviour tree escalates through a recovery sequence:
+**clear the costmap** (drop stale phantom obstacles), **spin** (re-observe surroundings),
+**back up** (reverse out of a wedge), **wait** (let a moving obstacle pass). The
+`behavior_server` owns these.
+
+Nav2's feedback reports `number_of_recoveries`, and this project surfaces it in its own
+feedback. It is the single most diagnostic number available: **zero recoveries means a clean
+drive; fifteen means the robot is fighting something.**
+
+---
+
+## 7. Topics, services, actions — the heart of this project
+
+ROS 2 offers three communication patterns. Requirement 3 of the brief is essentially a test of
+whether you know which is which.
+
+### 7.1 Topics — a broadcast
+
+Anonymous, one-way, many-to-many. A publisher shouts; whoever subscribed hears it. No reply,
+no delivery guarantee, no idea who is listening.
+
+Good for continuous streams: `/scan`, `/odom`, `/tf`, `/cmd_vel`. Bad for anything where you
+need to know it worked.
+
+### 7.2 Services — a function call
+
+Request in, response out, one client, one server, blocking until answered. Like calling a
+function across the network.
+
+Good for **transactions that are effectively instant**: *"is this location valid?"*,
+*"reserve a job id"*. Bad for anything slow, because the client sits there waiting, learning
+nothing.
+
+### 7.3 Actions — a long job you can watch and stop
+
+An action is the answer to *"do this thing, it will take a while, tell me how it is going, and
+let me stop it."* Three message parts:
+
+| part | carries |
+|---|---|
+| **Goal** | what to do — sent once |
+| **Feedback** | progress — streamed continuously while it runs |
+| **Result** | the outcome — sent once, at the end |
+
+Plus a lifecycle: a goal can be **accepted or rejected**, and once running it can be
+**cancelled**. It ends in exactly one terminal state — `SUCCEEDED`, `ABORTED`, or `CANCELED`.
+
+**This is the whole design of the courier.** Booking a delivery is a transaction — instant,
+either accepted or refused — so it is a *service*. Executing a delivery takes minutes, has
+things to say throughout, and must be interruptible — so it is an *action*. Requirement 1 says
+"the reply comes back immediately"; requirement 3 says "it runs for minutes, it streams
+feedback, it can be cancelled". Those are the definitions above, restated.
+
+```
+# RequestDelivery.srv                # ExecuteDelivery.action
+string pickup                        string job_id
+string dropoff                       ---
+---                                  bool   success
+bool   accepted                      string failed_leg
+string job_id                        ---
+string reason                        uint8   leg
+                                     float32 distance_remaining
+```
+
+### 7.4 Terminal states are a promise
+
+`SUCCEEDED` means the thing happened. Requirement 7 puts it bluntly:
+
+> A robot that reports success for a delivery it did not make is the one unforgivable bug in
+> this project.
+
+That is why the courier calls `abort()` and never `succeed()` on failure, and why `success`
+can only be set from the dropoff leg returning `SUCCEEDED`.
+
+---
+
+## 8. Nested actions, and the deadlock that eats beginners
+
+The courier is an action **server** (it serves `ExecuteDelivery`) and simultaneously an action
+**client** (it calls Nav2's `navigate_to_pose`). That nesting has a well-known failure mode.
+
+An **executor** is the loop that runs a node's callbacks. A *single-threaded* executor runs
+exactly one at a time. So if a callback blocks — waiting for a future, sleeping, spinning —
+**nothing else in that node can run**, including the callback that would deliver the very
+result it is waiting for. The node deadlocks, permanently, and the stack trace tells you
+nothing useful.
+
+Two ways out:
+
+1. **A multi-threaded executor with reentrant callback groups.** Works, but now callbacks
+   genuinely interleave and every shared member needs a mutex.
+2. **Never block.** Structure the node so every step is a callback or a timer, and no function
+   ever waits. Then a single-threaded executor is sufficient — and because callbacks are
+   serialized by construction, **no mutex is needed anywhere**.
+
+This project takes the second route, which is also what the course's
+[`patrol_commander.cpp`](../ros2_ws/src/acadbot_control/src/patrol_commander.cpp) does. The
+brief tells you to read that file first for exactly this reason.
+
+The shape looks like this — send, then hang callbacks off the result:
+
+```cpp
+rclcpp_action::Client<NavigateToPose>::SendGoalOptions opts;
+opts.goal_response_callback = [this](NavGoalHandle::SharedPtr h) {on_nav_goal_response(h);};
+opts.feedback_callback      = [this](auto, auto fb)             {on_nav_feedback(fb);};
+opts.result_callback        = [this](const auto & r)            {on_nav_result(r);};
+nav_client_->async_send_goal(goal, opts);      // returns immediately
+```
+
+There is one subtlety worth knowing cold: **you cannot finish a goal from inside
+`handle_cancel`.** The goal does not enter the `CANCELING` state until that callback has
+returned `ACCEPT`, so calling `canceled()` from within it throws. The courier defers the
+finish by one spin.
+
+---
+
+## 9. State machines and behaviour trees
+
+The courier's mission logic — *go to pickup, then dropoff; retry a failed leg; give up after
+N tries; stop if cancelled* — can be expressed two ways.
+
+### 9.1 A finite state machine
+
+States and transitions, written by hand. The courier's is two axes rather than one enum:
+
+```
+leg   ∈ { PICKUP, DROPOFF }
+phase ∈ { NAVIGATING, RETRY_WAIT, CANCELING }
+```
+
+Two small enums compose to six states but read better and map one-to-one onto what the
+feedback publishes. Explicit, debuggable, and every transition is visible in the source.
+
+### 9.2 A behaviour tree
+
+The same logic as a *tree* of composable nodes, ticked repeatedly at some rate. The vocabulary:
+
+- **Leaf / action nodes** do the work. Each tick returns `SUCCESS`, `FAILURE` or `RUNNING`.
+- **Sequence** runs children in order, stopping at the first `FAILURE`. This is "and then".
+- **Fallback** tries children in order until one succeeds. This is "or else".
+- **Decorators** wrap a single child and modify it — `RetryUntilSuccessful`, `Timeout`,
+  `Inverter`.
+
+The payoff is that structure lives in an XML file you can edit without recompiling:
+
+```xml
+<RetryUntilSuccessful num_attempts="3">
+  <Timeout msec="120000">
+    <GoToLocation leg="pickup" location="{pickup}"/>
+  </Timeout>
+</RetryUntilSuccessful>
+```
+
+That fragment is the courier's per-leg retry and timeout — the two fiddliest parts of the
+hand-written state machine — expressed as two decorators nobody had to write.
+
+Nav2's own `bt_navigator` works exactly this way, which is why the recovery escalation in §6.1
+is configurable rather than compiled in. BehaviorTree.CPP 4.9.0 ships in the course image as a
+Nav2 dependency.
+
+---
+
+## 10. Simulated time, and why it ruins everything
+
+Gazebo publishes `/clock`, and every node with `use_sim_time: true` uses that instead of the
+wall clock. This is correct and necessary — a simulation that runs at 0.7× real time must have
+its timestamps agree — but it introduces failure modes that do not exist on a real robot.
+
+- **Sim time starts at zero and stays there** for the first seconds while Gazebo initialises.
+  A node that reads `now()` during startup gets `0`.
+- **Sim time advances at whatever rate the simulation manages.** Measured here: **RTF 0.708**
+  steady-state, but effectively ~0.1 during the first few seconds.
+- **A timestamp of zero means "the latest available"** to tf2 — which is sometimes exactly
+  what you want, and sometimes hides a bug.
+
+Nearly every hard problem in this project traced back to one of those three. Four separate
+"is localization up?" checks were written before one was correct, and the first three each
+*passed while the system was broken*. [`REPORT.md` §8.2](REPORT.md) has the full autopsy; it
+is the most useful thing in this repository to read twice.
+
+---
+
+## 11. Vocabulary, mapped to this repository
+
+| term | one line | where it lives here |
+|---|---|---|
+| frame | a named coordinate system | `map`, `odom`, `base_footprint` |
+| TF | the timestamped tree of transforms between frames | `/tf`, `/tf_static` |
+| odometry | pose from integrating wheel motion; smooth, drifts | `/odom`, DiffDrive plugin |
+| occupancy grid | the map as free / occupied / unknown cells | `academy_map.pgm` |
+| AMCL | particle-filter localization on a known map | [`amcl.yaml`](../ros2_ws/src/acadbot_courier/config/amcl.yaml) |
+| particle | one hypothesis about the robot's pose | 500–2000 of them |
+| costmap | the map plus obstacles plus inflation, as cost | `global_costmap`, `local_costmap` |
+| inflation radius | halo of cost around obstacles; 0.45 m here | `nav2_params.yaml` |
+| planner | draws the global route (`navfn`) | `planner_server` |
+| controller | turns the route into wheel speeds (DWB) | `controller_server` |
+| recovery | clear / spin / back up / wait when stuck | `behavior_server` |
+| lifecycle node | node with configure → activate states | `map_server`, `amcl`, all Nav2 servers |
+| topic / service / action | broadcast / function call / long cancellable job | §7 |
+| goal, feedback, result | the three parts of an action | [`ExecuteDelivery.action`](../ros2_ws/src/acadbot_courier_msgs/action/ExecuteDelivery.action) |
+| executor | the loop that runs callbacks | `rclcpp::spin` in [`main.cpp`](../ros2_ws/src/acadbot_courier/src/main.cpp) |
+| behaviour tree | mission logic as a ticked tree of nodes | §9.2, Nav2's `bt_navigator` |
+
+---
+
+## 12. Questions you may be asked
+
+**Why is booking a service but delivery an action?**
+Booking is a transaction: instant, atomic, either accepted or refused, nothing to report while
+it happens. Delivery takes minutes, has continuous progress worth reporting, and must be
+interruptible. Those are the definitions of the two primitives (§7).
+
+**Why does the action goal carry only a `job_id` and not the coordinates?**
+Because the poses were resolved and frozen when the job was booked. Re-resolving them at
+execution time would let an edit to `courier.yaml` move the target of a job that had already
+been accepted — the requester is told one thing and the robot does another.
+
+**Why are there two frames, `map` and `odom`?**
+`odom` is smooth and drifts; `map` is correct and jumps. Controllers need smoothness, planners
+need global correctness (§2.3).
+
+**Why does AMCL need to be told where the robot starts?**
+It is given a map it did not build and asked a question with one right answer. Guessing means
+spreading 2000 particles over 48 m² and 360° — too thin to converge reliably (§4.2).
+
+**Why doesn't your node need a mutex?**
+Because nothing in it blocks, so a single-threaded executor serializes every callback by
+construction. That is a deliberate design constraint, not luck (§8).
+
+**Why does one of your routes fail?**
+DWB weights path-following 1600× more than obstacle proximity (`PathAlign.scale: 32.0` versus
+`BaseObstacle.scale: 0.02`), so on a tight corner it hugs the wall until its footprint is
+inside it. Tuning the controller is explicitly out of scope for this project, so that route is
+kept as the honest-failure demonstration instead (§6, [`REPORT.md` §10.2](REPORT.md)).
