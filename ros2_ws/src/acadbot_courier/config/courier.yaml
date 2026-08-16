@@ -37,8 +37,23 @@ courier_server:
     #     against a robot that needs 0.40 m. It now sits west of the cylinder.
     #   charging_dock was at (0.50, 0.50), a quarter of a metre from the edge
     #     of obstacle_1, and cost four recoveries every visit.
-    # reception -> lab_bench still crosses the corridor, which is the leg the
-    # blockage demo depends on.
+    # Which routes actually work, measured rather than assumed:
+    #
+    #   charging_dock -> storage   succeeds, 0 recoveries, ~50s. It crosses the
+    #     corridor, approaching from mid-height. This is the delivery to show.
+    #   reception -> lab_bench     the pickup succeeds; the dropoff does not.
+    #     Coming from the far north-west the robot runs down the divider's west
+    #     face and clips the tip while rounding it, ending at map (3.25, 0.90)
+    #     -- 0.175 m from a wall face, inside its own 0.20 m footprint radius.
+    #     The planner then cannot plan out of its own start pose. Slowing the
+    #     controller to 0.20 m/s stops it wedging badly enough to break the
+    #     planner but does not get it round the corner; nav2_params sets
+    #     BaseObstacle.scale to 0.02, so DWB weights obstacle proximity at
+    #     almost nothing. Tuning the controller is outside this project ("you
+    #     do not write a planner or a controller"), so this route is kept as
+    #     the honest-failure demonstration instead: the courier retries three
+    #     times and then reports failed_leg "dropoff" rather than claiming a
+    #     delivery it did not make.
     locations:
       reception:     [0.60, 4.20,  0.00]
       lab_bench:     [4.50, 4.20,  3.14]
