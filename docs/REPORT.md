@@ -16,7 +16,7 @@ built, what it measured, and what broke.
 |---|---|
 | [0. The result in one page](#0-the-result-in-one-page) | headline numbers |
 | [1. The task](#1-the-task) | the nine requirements, and what is out of scope |
-| [2. The design](#2-the-design) | service vs action, packages, the state machine |
+| [2. The design](#2-the-design) | service vs action, codebase structure and why, the state machine |
 | [3. The procedure, chronologically](#3-the-procedure-chronologically) | eight phases, in the order they happened |
 | [4. Results](#4-results) | every measurement |
 | [5. Problems faced](#5-problems-faced) | six autopsies, including the one that cost a day |
@@ -131,23 +131,74 @@ string job_id        # ExecuteDelivery.action, Goal — that is the whole goal
 the action runs would let an edit to `courier.yaml` move the target of a job already accepted
 — the requester is told one thing and the robot does another.
 
-### 2.2 Packages and nodes
+### 2.2 Codebase structure, and why it is this and not something smaller
+
+Two new packages, three executables. The existing tree already had six packages and a launch-only
+`acadbot_bringup`, so "add a file to something that exists" was a live option and was rejected
+for reasons worth writing down. [`COMPONENTS.md` § The layout](COMPONENTS.md) is the
+file-by-file map; this is the argument.
 
 | package | contents |
 |---|---|
 | `acadbot_courier_msgs` | `RequestDelivery.srv`, `ExecuteDelivery.action` |
 | `acadbot_courier` | `courier_server`, `courier_bt_server`, `initial_pose_seeder`, config, launch, rviz, `behavior_trees/` |
 
-Interfaces are their own package so consumers can depend on the contract without dragging in
-the node that implements it.
+**Why the interfaces are a package of their own.** So a client can depend on the *contract*
+without dragging in the node that implements it. This is not hypothetical tidiness: the moment
+anything else in the building wants to book a delivery, it needs `RequestDelivery.srv` and
+nothing else. Generating the interfaces inside `acadbot_courier` would make every such client
+depend on Nav2, `behaviortree_cpp` and an RViz config.
 
-`initial_pose_seeder` is a separate executable rather than folded into the courier: a delivery
-service that also sets up localization is harder to defend than a sixty-line node whose name
-says what it does — and it can be dropped from the launch if you prefer to click.
+**Why not a file in `acadbot_bringup`.** Because the dependency arrow points the wrong way.
+`acadbot_bringup` is launch-only — its entire `CMakeLists.txt` is `install(DIRECTORY launch)`,
+and it exists to *compose* the other packages. Anything implemented there would make every
+session's bringup depend on the final project, and a client calling `/request_delivery` would
+have to depend on a package full of launch files for four unrelated sessions.
 
-`courier_server` builds from four sources rather than a library plus a thin `main`. Nothing
-outside the package links against it, no tests depend on it, and every other package in the
-tree builds plain executables.
+**Why not a node in `acadbot_control`.** This is the closest existing home — it is where
+`patrol_commander` lives, and the courier is the same category of thing. The reason it is
+separate is that the final project is a self-contained deliverable: it can be added, reviewed
+or removed without touching a package the course's own sessions depend on. That is a preference
+rather than a rule, and someone could reasonably have decided the other way.
+
+**Why C++ rather than a Python node.** The strongest structural decision here, and the evidence
+for it arrived from an unexpected direction. The courier is an **action server that holds an
+action client**. In `rclcpp` that shape falls out of the API: `handle_accepted` returns
+immediately, everything after it is a callback or a timer, one executor serialises the lot, and
+no state needs a mutex (§7). `rclpy`'s action server is built the other way round —
+`execute_callback` is a blocking function you are expected to loop inside, which is exactly the
+shape that deadlocks a node that is both server and client.
+
+The proof is `tools/fake_nav2.py`, a *far* simpler node than the courier, which hit all three
+failure modes while being written:
+
+| attempt | what happened |
+|---|---|
+| `spin_once()` inside `execute` | `Executor is already spinning` → reported as an **aborted goal** |
+| blocking `sleep` inside `execute` | cancels never serviced; the executor was stuck inside the callback |
+| working version | `ReentrantCallbackGroup` + `MultiThreadedExecutor` — i.e. threads, therefore locks |
+
+A Python courier would meet all three with a nested action client and a dozen members of shared
+state instead of a counter. Two secondary reasons: BehaviorTree.CPP is C++ only, so the bonus
+would have needed a different library; and every node in this repository is C++ already.
+
+**Why `initial_pose_seeder` is its own executable** rather than folded into the courier: a
+delivery service that also quietly sets up localization is harder to defend than a small node
+whose name says what it does — and it can be dropped from the launch by anyone who would rather
+click **2D Pose Estimate**.
+
+**Why the courier binaries have no intermediate library.** `courier_server` builds from four
+sources directly rather than a `courier_core` library plus a thin `main`. Nothing outside the
+package links against it, no tests depend on it, and every other package in the tree builds
+plain executables. The sharing that does exist — `location_table.cpp` and `location_markers.cpp`
+compiling into both engines — needs no library to happen.
+
+**One place this is arguably wrong.** `courier.launch.py` lives in `acadbot_courier`, but
+`acadbot_bringup` is where every other one-command launch lives and requirement 9 is precisely
+a one-command bringup. The reason it does not is narrow: AMCL needs the courier's own
+`amcl.yaml`, and `autonomy.launch.py` accepts no `params_file` argument — so `courier.launch.py`
+composes the stack itself instead of including it. That is a limitation worked around rather
+than fixed, and fixing it (§9) would be the more consistent choice.
 
 ### 2.3 The state machine
 
@@ -643,6 +694,10 @@ worth more than the two lines it deleted.
   comparison is actually about.
 - **Raise the tick rate, or measure what it should be.** 10 Hz costs 0.4 s per delivery (§11.3)
   and was chosen by intuition. The right number is a measurement, not a guess.
+- **Add `params_file` to `autonomy.launch.py`, then move `courier.launch.py` into
+  `acadbot_bringup`** where every other one-command launch lives (§2.2). The courier composes
+  the stack itself only because that argument is missing; that is a workaround standing in for
+  a two-line fix.
 - **A queue.** "One job at a time" is a real limitation, honestly stated. A queue means
   deciding what cancel means for a job that has not started.
 - **Bounded job history.** `jobs_` grows for the life of the process so replayed ids can be
