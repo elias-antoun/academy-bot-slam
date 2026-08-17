@@ -31,6 +31,14 @@ FINAL_PROJECT.md
 HW/
 screenshots/
 
+# --- working notes written at the repo root while building the courier ---
+#     Superseded by docs/ and by acadbot_courier/README.md, which are the
+#     versions meant to be read. Kept locally rather than deleted.
+COURIER_BEHAVIOR_TREE.md
+COURIER_FSM.md
+COURIER_STATE_MACHINE.md
+FINAL_PROJECT_REVIEW.md
+
 # --- python / venv (slide generator etc.) ---
 __pycache__/
 *.pyc
