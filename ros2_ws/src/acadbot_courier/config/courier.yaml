@@ -14,7 +14,18 @@
 # wall or obstacle -- closer than that and Nav2 spends its time fighting the
 # goal instead of driving to it.
 
-courier_server:
+# /** rather than a node name, so that courier_server and courier_bt_server
+# read one block instead of a copy each. They are the same mission with the
+# same building and the same limits -- two copies could drift, and a location
+# edited in one and not the other would quietly give the two implementations
+# different destinations, which is exactly the comparison this file exists to
+# make fair. Only one of the two ever runs, and the launch file hands this
+# file to that one node, so the wildcard cannot leak into anything else.
+#
+# YAML anchors would be the other way to do this. They are not used because
+# ROS 2's parameter parser does not handle aliases reliably, and the failure
+# looks like a configuration bug rather than a parsing one.
+/**:
   ros__parameters:
     use_sim_time: true
 
@@ -59,3 +70,4 @@ courier_server:
       lab_bench:     [4.50, 4.20,  3.14]
       storage:       [5.50, 0.60,  0.00]
       charging_dock: [0.50, 2.00, -1.57]
+
