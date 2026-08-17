@@ -19,6 +19,8 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(behaviortree_cpp REQUIRED)
 
 # ---- courier_server (RequestDelivery service + ExecuteDelivery action + Nav2 client) ----
 add_executable(courier_server
@@ -31,15 +33,28 @@ ament_target_dependencies(courier_server
   rclcpp rclcpp_action acadbot_courier_msgs nav2_msgs
   geometry_msgs tf2 tf2_geometry_msgs visualization_msgs)
 
+# ---- courier_bt_server (Behavior Tree bonus implementation) ----
+add_executable(courier_bt_server
+  src/bt_main.cpp
+  src/courier_bt_server.cpp
+  src/bt_nodes.cpp
+  src/location_table.cpp
+  src/location_markers.cpp)
+target_include_directories(courier_bt_server PRIVATE include)
+ament_target_dependencies(courier_bt_server
+  rclcpp rclcpp_action acadbot_courier_msgs nav2_msgs
+  geometry_msgs tf2 tf2_geometry_msgs visualization_msgs
+  ament_index_cpp behaviortree_cpp)
+
 # ---- initial_pose_seeder (tells AMCL where the robot starts) ----
 add_executable(initial_pose_seeder src/initial_pose_seeder.cpp)
 ament_target_dependencies(initial_pose_seeder
   rclcpp geometry_msgs sensor_msgs tf2 tf2_geometry_msgs tf2_ros)
 
-install(TARGETS courier_server initial_pose_seeder
+install(TARGETS courier_server courier_bt_server initial_pose_seeder
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY config launch rviz
+install(DIRECTORY behavior_trees config launch rviz
   DESTINATION share/${PROJECT_NAME})
 
 ament_package()

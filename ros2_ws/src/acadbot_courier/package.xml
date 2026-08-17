@@ -21,6 +21,8 @@
   <depend>tf2_ros</depend>
   <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>behaviortree_cpp</depend>
 
   <exec_depend>acadbot_gazebo</exec_depend>
   <exec_depend>acadbot_navigation</exec_depend>
