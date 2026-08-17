@@ -210,8 +210,20 @@ pass-through argument on `autonomy.launch.py` would not have helped:
 
 What is actually missing is a *second* argument — splitting `params_file` into one for the Nav2
 servers and one for localization — which is a signature change to a package Sessions 3 and 4
-depend on, not a small fix in a package this project owns. Composing the stack in
-`courier.launch.py` is the cheaper answer, and it is why the file lives where it does.
+depend on, not a small fix in a package this project owns. **Composing the stack rather than
+including `autonomy.launch.py` is therefore the right call**, and would remain so wherever the
+file lived.
+
+That is worth separating from the second question, because they are easy to run together and
+only the first is settled. *Composing versus including* is decided by the paragraph above.
+*Which package the file sits in* is not, and the evidence there points mildly the other way:
+`acadbot_bringup` already `exec_depend`s on all five implementation packages and its two launch
+files already reach into four of them through `get_package_share_directory`. A
+`courier.launch.py` there — composing the stack exactly as it does now, just from a different
+package — would be the established pattern rather than a departure from it. The argument for
+where it actually sits is narrower: the package ships runnable on its own, and a deliverable
+that can be added or removed without leaving a dangling launch file behind in a course package
+is worth something. A judgement call, made once, with low stakes either way.
 
 The gap it works around, however, is **one parameter**. Diffed key by key, the courier's
 `amcl.yaml` and `nav2_params.yaml`'s `amcl:` block are identical but for
