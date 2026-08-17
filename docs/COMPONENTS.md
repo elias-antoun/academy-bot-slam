@@ -18,6 +18,7 @@ which goals to send, in what order, what to do when one fails, and how to tell a
 
 | Group | Components |
 |---|---|
+| [The layout](#the-layout) | the file tree · three executables and their sources · every file, one line each |
 | [A. The interfaces](#a-the-interfaces) | `RequestDelivery.srv` · `ExecuteDelivery.action` · why a separate package |
 | [B. Value types and the location table](#b-value-types-and-the-location-table) | `Pose2D` / `Leg` / `JobState` · `Job` and frozen poses · parameter-override discovery · the failure paths · `known_names()` |
 | [C. The courier node](#c-the-courier-node) | construction · the service handler · job ids · goal acceptance · cancel and the deferred finish · the state machine · retry · the three endings · feedback on its own clock |
@@ -26,6 +27,121 @@ which goals to send, in what order, what to do when one fails, and how to tell a
 | [F. Bringup and configuration](#f-bringup-and-configuration) | `courier.launch.py` ordering · `courier.yaml` |
 | [G. The test harness](#g-the-test-harness) | stand-in Nav2 · cancel client · shell drivers |
 | [H. The behaviour tree (bonus)](#h-the-behaviour-tree-bonus) | `courier.xml` · `GoToLocation` · `courier_bt_server` · one config block for two engines · `mission:=fsm\|bt` |
+
+Start with [the layout](#the-layout) if you want the map before the territory.
+
+---
+
+# The layout
+
+Two packages, three executables, thirty tracked files. Why it is split this way — rather than
+a node dropped into `acadbot_control`, or a Python file in `acadbot_bringup` — is argued in
+[`REPORT.md` §2.2](REPORT.md). This section is the map.
+
+```
+ros2_ws/src/
+├── acadbot_courier_msgs/            THE CONTRACT — what a client depends on
+│   ├── srv/RequestDelivery.srv
+│   ├── action/ExecuteDelivery.action
+│   ├── CMakeLists.txt
+│   └── package.xml
+│
+└── acadbot_courier/                 THE IMPLEMENTATION
+    ├── include/acadbot_courier/     headers, one per translation unit
+    ├── src/                         three executables' worth of sources
+    ├── behavior_trees/courier.xml   the mission, as data (bonus)
+    ├── config/                      courier.yaml, amcl.yaml
+    ├── launch/courier.launch.py     the whole stack, one command
+    ├── rviz/courier.rviz
+    ├── CMakeLists.txt
+    ├── package.xml
+    └── README.md
+
+tools/                               NOT BUILT — test harness
+├── fake_nav2.py
+└── README.md
+
+docs/                                BACKGROUND · COMPONENTS · REPORT
+```
+
+**Three executables, and which sources make them.** This is the part a file listing does not
+tell you:
+
+| executable | built from | what it is |
+|---|---|---|
+| `courier_server` | `main.cpp` · `courier_server.cpp` · `location_table.cpp` · `location_markers.cpp` | the courier, state-machine engine |
+| `courier_bt_server` | `bt_main.cpp` · `courier_bt_server.cpp` · `bt_nodes.cpp` · `location_table.cpp` · `location_markers.cpp` | the courier, behaviour-tree engine |
+| `initial_pose_seeder` | `initial_pose_seeder.cpp` | tells AMCL where the robot starts |
+
+`location_table.cpp` and `location_markers.cpp` compile into **both** courier binaries. That is
+the one piece of sharing between the two engines, and it is deliberate: they can disagree about
+how to run a mission, but they cannot disagree about what a location *is*.
+
+## Every file, one line each
+
+**The contract** — `acadbot_courier_msgs/`
+
+| file | ln | what it does | entry |
+|---|---|---|---|
+| `srv/RequestDelivery.srv` | 8 | book a delivery: two names in, an id or a refusal out | [A1](#a1-requestdeliverysrv--booking) |
+| `action/ExecuteDelivery.action` | 35 | run a booked job: goal, result, and the six feedback fields | [A2](#a2-executedeliveryaction--running-the-job) |
+| `CMakeLists.txt` · `package.xml` | 34 | `rosidl` generation; no dependency on the implementation | [A3](#a3-why-the-interfaces-are-their-own-package) |
+
+**Shared vocabulary** — used by every target in the package
+
+| file | ln | what it does | entry |
+|---|---|---|---|
+| `include/…/types.hpp` | 97 | `Pose2D`, `Leg`, `JobState`, `Job` — and the frozen poses | [B1](#b1-pose2d-leg-jobstate), [B2](#b2-job--and-why-the-poses-are-frozen) |
+| `include/…/location_table.hpp` · `src/location_table.cpp` | 142 | discovers locations from parameter overrides; refuses a bad floor plan | [B3](#b3-locationtablefrom_parameters--discovery-from-parameter-overrides)–[B5](#b5-known_names--the-rejection-message) |
+| `include/…/location_markers.hpp` · `src/location_markers.cpp` | 138 | draws the location table in RViz, current target highlighted | [D1](#d1-make_location_markers) |
+
+**Engine 1 — the state machine**
+
+| file | ln | what it does | entry |
+|---|---|---|---|
+| `include/…/courier_server.hpp` | 168 | the node: `Phase`, `CancelReason`, and every member the FSM tracks | [C](#c-the-courier-node) |
+| `src/courier_server.cpp` | 583 | booking, the action server, the Nav2 client, retry, timeout, the three endings | [C1](#c1-construction)–[C12](#c12-to_goal_pose-and-one-naming-trap) |
+| `src/main.cpp` | 28 | single-threaded spin, with construction wrapped so a bad config dies loudly | [C1](#c1-construction) |
+
+**Engine 2 — the behaviour tree (bonus)**
+
+| file | ln | what it does | entry |
+|---|---|---|---|
+| `behavior_trees/courier.xml` | 74 | the entire mission: two legs, retry, timeout, inter-attempt delay | [H1](#h1-courierxml--the-mission-as-data) |
+| `include/…/bt_nodes.hpp` · `src/bt_nodes.cpp` | 345 | `GoToLocation`, the only custom leaf; `LegStatus`; `NavContext` | [H2](#h2-gotolocation--the-only-custom-leaf), [H3](#h3-legstatus--feedback-that-survives-the-gap) |
+| `include/…/courier_bt_server.hpp` · `src/courier_bt_server.cpp` | 505 | the same plumbing as engine 1, with the leg loop replaced by a ticked tree | [H4](#h4-courier_bt_server--the-plumbing-and-the-tick) |
+| `src/bt_main.cpp` | 22 | as `main.cpp`, different class | — |
+
+**Making it run**
+
+| file | ln | what it does | entry |
+|---|---|---|---|
+| `src/initial_pose_seeder.cpp` | 235 | seeds AMCL and *verifies* it worked, so requirement 9 needs no mouse | [E1](#e1-initial_pose_seeder), [E2](#e2-transform_advancing--the-check-that-took-four-attempts) |
+| `config/courier.yaml` | 73 | locations and limits, one `/**:` block read by both engines | [F2](#f2-courieryaml), [H5](#h5-one-config-block-for-two-engines) |
+| `config/amcl.yaml` | 75 | localization parameters — and two deliberate absences | [E3](#e3-amclyaml--two-deliberate-absences) |
+| `launch/courier.launch.py` | 192 | sim → localization → seed → Nav2 → courier → RViz, in that order for reasons | [F1](#f1-courierlaunchpy), [H6](#h6-missionfsmbt) |
+| `rviz/courier.rviz` | 105 | the map, the costmaps, and the location markers | [D2](#d2-courierrviz) |
+| `CMakeLists.txt` · `package.xml` | 94 | three targets; `behaviortree_cpp` and `ament_index_cpp` for engine 2 | [H4](#h4-courier_bt_server--the-plumbing-and-the-tick) |
+| `README.md` | 181 | how to run it, and what it does and does not do | — |
+
+**Not built, not installed** — `tools/`
+
+| file | ln | what it does | entry |
+|---|---|---|---|
+| `fake_nav2.py` | 136 | a `navigate_to_pose` that fails on command, so the courier is testable in seconds | [G1](#g1-fake_nav2py--a-stand-in-navigate_to_pose) |
+| `README.md` | 81 | the three switches, and the two traps in the harness itself | [G1](#g1-fake_nav2py--a-stand-in-navigate_to_pose) |
+
+## Two rules the layout follows
+
+**Nothing depends on the launch package, and the launch package depends on everything.**
+`acadbot_bringup` composes; it never implements. Putting the courier's interfaces there would
+mean a client wanting to call `/request_delivery` had to depend on a package full of launch
+files for four unrelated sessions.
+
+**A header exists where a second translation unit needs the declaration** — not one per class
+as a reflex. `courier_server.hpp` exists because `main.cpp` constructs the class;
+`location_table.hpp` because four other files use the table. There is no `bt_main.hpp`, because
+nothing includes `bt_main.cpp`.
 
 ---
 
