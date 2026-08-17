@@ -104,6 +104,24 @@ private:
   /// means anything once `finished_` is true.
   bool finished_{false};
   bool outcome_{false};
+
+  /// This attempt has been halted -- by a cancelled delivery, or by the
+  /// Timeout wrapped around it -- and any Nav2 goal it owns must stop.
+  ///
+  /// Needed because a halt can land in the gap between async_send_goal and
+  /// the goal-response callback, when there is no handle to cancel yet. The
+  /// flag makes on_goal_response cancel the goal the moment it arrives;
+  /// without it the tree stops but the robot keeps driving.
+  bool halted_{false};
+
+  /// Expires when this node is destroyed.
+  ///
+  /// The Nav2 callbacks are bound to a tree leaf, not to the ROS node, and a
+  /// leaf dies with its tree -- which happens when the next job builds a new
+  /// one. A result still in flight from a cancelled goal would then land in
+  /// freed memory. The callbacks hold a weak_ptr to this and give up if it
+  /// has expired.
+  std::shared_ptr<bool> alive_{std::make_shared<bool>(true)};
 };
 
 /// Teach the factory about GoToLocation, handing every instance the same
