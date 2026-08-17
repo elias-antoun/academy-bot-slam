@@ -30,9 +30,12 @@ whole bringup and leaves every server INACTIVE, after which every goal comes
 back "rejected".
 
 This composes the stack itself rather than including acadbot_bringup's
-autonomy.launch.py, which does not forward params_file: AMCL here needs the
-courier's own parameter file, while the Nav2 servers keep the course's
-untouched nav2_params.yaml.
+autonomy.launch.py. That file forwards no params_file, but the deeper reason
+is one level down: navigation.launch.py accepts a single params_file and hands
+the *same* one to both AMCL and the twelve Nav2 servers. AMCL here needs this
+package's parameter file, which holds an amcl block and nothing else, while
+the Nav2 servers must keep the course's untouched nav2_params.yaml -- so one
+file cannot serve both, and no pass-through argument would fix it.
 
 Arguments:
     headless:=true    Gazebo server only — no GUI, no GPU needed

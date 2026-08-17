@@ -841,9 +841,14 @@ clock message, so it moves along with it.
 ([`courier.launch.py`](../ros2_ws/src/acadbot_courier/launch/courier.launch.py)): simulation,
 `map_server` + AMCL, the seeder, the Nav2 servers, RViz, the courier.
 
-**Why it composes the stack rather than including `autonomy.launch.py`.** That file does not
-forward `params_file`, and AMCL here needs this package's parameters while the Nav2 servers
-keep the course's untouched `nav2_params.yaml`.
+**Why it composes the stack rather than including `autonomy.launch.py`.** That file forwards no
+`params_file` — but the real obstacle is one level below it. `navigation.launch.py` accepts a
+single `params_file` and hands **the same one** to both `localization_launch.py` and
+`nav2_stack.launch.py`. AMCL here needs this package's file, which holds an `amcl:` block and
+nothing else; the Nav2 servers need the course's untouched `nav2_params.yaml`, with its twelve
+server blocks. One file cannot be both, so no pass-through argument would have helped — what is
+missing is a *second* argument. See [`REPORT.md` §2.2](REPORT.md) for the cheaper alternative:
+the two `amcl:` blocks differ by exactly one parameter.
 
 **Why the ordering is what it is.** Localization starts **with** the simulation — AMCL keeps
 its own TF buffer, and that buffer only starts filling when the node does, so a late start

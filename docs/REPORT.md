@@ -193,12 +193,35 @@ package links against it, no tests depend on it, and every other package in the 
 plain executables. The sharing that does exist — `location_table.cpp` and `location_markers.cpp`
 compiling into both engines — needs no library to happen.
 
-**One place this is arguably wrong.** `courier.launch.py` lives in `acadbot_courier`, but
-`acadbot_bringup` is where every other one-command launch lives and requirement 9 is precisely
-a one-command bringup. The reason it does not is narrow: AMCL needs the courier's own
-`amcl.yaml`, and `autonomy.launch.py` accepts no `params_file` argument — so `courier.launch.py`
-composes the stack itself instead of including it. That is a limitation worked around rather
-than fixed, and fixing it (§9) would be the more consistent choice.
+**One place this is arguably wrong** — `courier.launch.py` lives in `acadbot_courier`, where
+`acadbot_bringup` is home to every other one-command launch and requirement 9 is precisely a
+one-command bringup. The reason is worth stating exactly, because the obvious version of it is
+wrong.
+
+`autonomy.launch.py` forwards no `params_file`. But one level down `navigation.launch.py` *does*
+accept one — and forwards **the same file to both** `localization_launch.py` (AMCL) and
+`nav2_stack.launch.py` (the twelve Nav2 servers). One file, two very different roles. So a
+pass-through argument on `autonomy.launch.py` would not have helped:
+
+| pass | result |
+|---|---|
+| `acadbot_courier/config/amcl.yaml` | contains only an `amcl:` block, so every Nav2 server loses the course's tuned parameters and starts on library defaults |
+| `acadbot_navigation/config/nav2_params.yaml` | Nav2 correct, AMCL missing what the courier needs |
+
+What is actually missing is a *second* argument — splitting `params_file` into one for the Nav2
+servers and one for localization — which is a signature change to a package Sessions 3 and 4
+depend on, not a small fix in a package this project owns. Composing the stack in
+`courier.launch.py` is the cheaper answer, and it is why the file lives where it does.
+
+The gap it works around, however, is **one parameter**. Diffed key by key, the courier's
+`amcl.yaml` and `nav2_params.yaml`'s `amcl:` block are identical but for
+`transform_tolerance: 1.0` — which is there because it is also the window AMCL allows when
+looking up `base_footprint → odom` for an incoming initial pose, and that lookup asks for *now*
+while TF runs a few milliseconds behind (§5.1). So a third option exists and is arguably the
+cleanest: put that one line in the course's `amcl:` block, delete `config/amcl.yaml`, and the
+courier can include `navigation.launch.py` unchanged. It was not taken because it edits a shared
+course file to suit one project — but "the planner, the controller and the recovery behaviours
+stay untouched" is the rule this project actually committed to, and AMCL is none of those (§9).
 
 ### 2.3 The state machine
 
@@ -694,10 +717,15 @@ worth more than the two lines it deleted.
   comparison is actually about.
 - **Raise the tick rate, or measure what it should be.** 10 Hz costs 0.4 s per delivery (§11.3)
   and was chosen by intuition. The right number is a measurement, not a guess.
-- **Add `params_file` to `autonomy.launch.py`, then move `courier.launch.py` into
-  `acadbot_bringup`** where every other one-command launch lives (§2.2). The courier composes
-  the stack itself only because that argument is missing; that is a workaround standing in for
-  a two-line fix.
+- **Move `courier.launch.py` into `acadbot_bringup`**, where every other one-command launch
+  lives (§2.2). Two routes, and the cheap one is not the obvious one. *Obvious:* split
+  `navigation.launch.py`'s single `params_file` into one for Nav2 and one for localization —
+  correct, but a signature change to a package Sessions 3 and 4 depend on. *Cheap:* add
+  `transform_tolerance: 1.0` to the course's `amcl:` block, which is the **only** thing the
+  courier's `amcl.yaml` adds, then delete that file and include `navigation.launch.py`
+  unchanged. Measure the second one first: if AMCL seeding still works for Sessions 3 and 4 with
+  that line present, one parameter buys back a whole config file and a launch file's worth of
+  duplication.
 - **A queue.** "One job at a time" is a real limitation, honestly stated. A queue means
   deciding what cancel means for a job that has not started.
 - **Bounded job history.** `jobs_` grows for the life of the process so replayed ids can be
