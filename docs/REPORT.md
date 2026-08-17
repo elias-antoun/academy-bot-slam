@@ -16,7 +16,7 @@ built, what it measured, and what broke.
 |---|---|
 | [0. The result in one page](#0-the-result-in-one-page) | headline numbers |
 | [1. The task](#1-the-task) | the nine requirements, and what is out of scope |
-| [2. The design](#2-the-design) | service vs action, codebase structure and why, the state machine |
+| [2. The design](#2-the-design) | service vs action, codebase structure and why, the state machine, the inherited Nav2 configuration |
 | [3. The procedure, chronologically](#3-the-procedure-chronologically) | eight phases, in the order they happened |
 | [4. Results](#4-results) | every measurement |
 | [5. Problems faced](#5-problems-faced) | six autopsies, including the one that cost a day |
@@ -102,9 +102,11 @@ The one line that shapes every design decision:
 > Under the hood your code is a `navigate_to_pose` action client. **You do not write a planner
 > or a controller.**
 
-`acadbot_navigation/config/nav2_params.yaml` is untouched. This matters twice in what follows:
-it is why the courier is a thin mission layer, and it is why the one failing route was
-*documented* rather than fixed by retuning DWB (§5.4).
+`acadbot_navigation/config/nav2_params.yaml` is untouched on this branch —
+`git log main..HEAD -- ros2_ws/src/acadbot_navigation/` returns nothing. This matters twice in
+what follows: it is why the courier is a thin mission layer, and it is why the one failing route
+was *documented* rather than fixed by retuning DWB (§5.3). What that file actually configures,
+and who chose it, is §2.5.
 
 ---
 
@@ -271,6 +273,76 @@ is deliberate: it is the verified implementation and the demo fallback.
 
 "One job at a time" is fixed on purpose: a running job owns the robot, and a queue would be a
 different product with different failure modes.
+
+### 2.5 The navigation configuration — inherited, not chosen
+
+Every number in §4 is a measurement *of a particular Nav2 configuration*, so the configuration
+belongs in the report. None of it is this project's work, and the history says so rather than
+the author.
+
+**Who set it.** `git blame` attributes every line below to `3b8d932`, the course's initial
+commit, authored by the instructor on 2026-06-30:
+
+```
+^3b8d932 (Wael Al Sayegh 2026-06-30)   plugin: "nav2_navfn_planner::NavfnPlanner"
+^3b8d932 (Wael Al Sayegh 2026-06-30)   use_astar: false
+^3b8d932 (Wael Al Sayegh 2026-06-30)   BaseObstacle.scale: 0.02
+^3b8d932 (Wael Al Sayegh 2026-06-30)   PathAlign.scale: 32.0
+```
+
+The file has changed once since, in `165c76c` on `main`, which *appended* a `docking_server:`
+block — Nav2's stock bringup starts that server, it cannot configure without a `dock_plugins`
+entry, and the lifecycle manager then aborts the entire bringup and leaves every server
+INACTIVE. That predates this project and touched no planner or controller line.
+
+**The algorithm minimising path cost is Dijkstra.**
+
+```yaml
+GridBased:
+  plugin: "nav2_navfn_planner::NavfnPlanner"
+  tolerance: 0.5
+  use_astar: false          # ← Dijkstra
+  allow_unknown: true
+```
+
+`NavfnPlanner` propagates a potential field outward from the goal across the global costmap and
+extracts the route by gradient descent from the robot's cell. `use_astar: false` makes the
+propagation uniform-cost. At 160 × 120 cells a complete expansion is under 20,000 cells and
+finishes well inside the 20 Hz `expected_planner_frequency`, so A\* would buy milliseconds.
+
+**And "cost" is not distance.** It is accumulated per-cell costmap cost, which is shaped by:
+
+```yaml
+robot_radius: 0.20 ; resolution: 0.05
+inflation_layer:  cost_scaling_factor: 3.0 ; inflation_radius: 0.45
+```
+
+Two of those numbers are load-bearing in the results. `inflation_radius: 0.45` is the clearance
+a location in `courier.yaml` needs, and is how two of the four locations were found to be badly
+placed (§4.2). `robot_radius: 0.20` is why a robot stopped 0.175 m from a wall face has its own
+footprint inside the wall, and why the planner then cannot plan out of its own start pose
+(§5.3).
+
+**The controller is not a search.** DWB samples `vx_samples: 20` × `vtheta_samples: 20` = 400
+velocity pairs per cycle, rolls each forward `sim_time: 1.7` s, scores them with a weighted sum
+of critics and publishes the winner, 20 times a second:
+
+| critic | scale |
+|---|---|
+| `PathDist`, `PathAlign`, `RotateToGoal` | 32.0 |
+| `GoalDist`, `GoalAlign` | 24.0 |
+| **`BaseObstacle`** | **0.02** |
+
+`max_vel_x: 0.26`, `max_vel_theta: 1.0`. That 1600:1 ratio between path adherence and obstacle
+proximity is the single most consequential number in this report — it is the direct cause of
+the one route that does not complete (§5.3) and the reason lowering the speed helped but did
+not fix it (§6.1).
+
+**Why none of it was changed**, beyond the brief's rule: `nav2_params.yaml` is shared with
+Sessions 3 and 4, which are presumably tuned around its current behaviour. Raising
+`BaseObstacle.scale` to rescue one courier route would silently alter the demo every other
+session depends on — the same shape of argument as the `transform_tolerance` question in §2.2.
+[`COMPONENTS.md` F3](COMPONENTS.md) has the full parameter listing.
 
 ---
 
