@@ -321,7 +321,58 @@ to the instructor, and `acadbot_navigation` is unmodified on the final-project b
 the brief's rule — *you do not write a planner or a controller* — visible in the history rather
 than merely asserted ([`REPORT.md` §2.5](REPORT.md)).
 
-### 6.1 Recovery behaviours
+### 6.1 Dijkstra, and what it is actually minimising
+
+Worth doing properly, because "the planner uses Dijkstra" is a sentence people repeat without
+being able to say what it means.
+
+**First, the grid is a graph.** Every costmap cell is a node. Each cell is connected to its
+neighbours, and the *weight* of stepping into a neighbour is that neighbour's cost — high next
+to a wall, low in open space. So "find the cheapest path" is a shortest-path problem on a graph
+of ~19,000 nodes, and the thing being minimised is **the sum of the costs of the cells you step
+through**, not the number of steps.
+
+That is the sentence to keep: **cheapest ≠ shortest.** A route that detours two metres into open
+floor can easily cost less than one that squeezes past a doorframe, because the doorframe cells
+carry inflation cost and the open floor does not.
+
+**Dijkstra's algorithm** finds the cheapest route from one source to every reachable node:
+
+1. Give the source cost 0 and every other node cost ∞.
+2. Take the unvisited node with the **smallest cost so far** and mark it finalised.
+3. For each of its neighbours, check whether reaching it *through this node* is cheaper than
+   the best route found so far. If it is, write down the cheaper figure.
+4. Repeat from 2 until every reachable node is finalised.
+
+The whole thing is one idea: **always expand the cheapest frontier node next.** When a node
+finally comes off that frontier, no cheaper route to it can exist — anything still unexplored
+already costs more. That is why the answer is *optimal* and not merely good, and it is also why
+the algorithm needs costs to be **non-negative**: a negative-cost edge could make a route you
+already finalised retrospectively cheaper. Costmap cells are 0–254, so that never arises.
+
+Picture it as flooding. Water released at the source spreads outward, moving slowly through
+expensive cells and quickly through cheap ones; the moment it reaches the goal, the route it
+took is the cheapest one. NavFn literally builds that flood — a **potential field**, computed
+from the goal outward — and then finds the path by starting at the robot and walking downhill.
+
+**A\* is Dijkstra plus a hint.** Instead of expanding by cost-so-far `g(n)`, it expands by
+`g(n) + h(n)`, where `h(n)` estimates the remaining cost to the goal — usually straight-line
+distance. The effect is that the flood stops spreading evenly in all directions and pushes
+towards the goal instead. As long as `h` never *overestimates* the true remaining cost — the
+"admissible" condition, which straight-line distance satisfies because no route can beat a
+straight line — A\* returns the same optimal answer as Dijkstra while touching far fewer nodes.
+
+**Which is why `use_astar: false` is defensible here.** A\*'s advantage is fewer expansions, and
+this map is 160 × 120. Dijkstra floods every reachable cell and still finishes inside the 20 Hz
+planner budget. On a warehouse-sized map the difference stops being academic.
+
+One refinement worth knowing so the output does not surprise you: NavFn does not do textbook
+Dijkstra on eight-connected cells, which would produce paths made only of 45° segments. It
+computes an **interpolated** potential — solving for a smooth surface rather than discrete
+per-cell values — so the gradient descent that extracts the path can run at any angle. That is
+why Nav2's global plan looks like a smooth curve rather than a staircase.
+
+### 6.2 Recovery behaviours
 
 When planning or control fails, Nav2's behaviour tree escalates through a recovery sequence:
 **clear the costmap** (drop stale phantom obstacles), **spin** (re-observe surroundings),
@@ -518,7 +569,7 @@ hand-written state machine — as two decorators nobody had to write. The full t
 [`courier.xml`](../ros2_ws/src/acadbot_courier/behavior_trees/courier.xml), and changing how
 many times a leg is retried is an edit to it, not a rebuild.
 
-Nav2's own `bt_navigator` works exactly this way, which is why the recovery escalation in §6.1
+Nav2's own `bt_navigator` works exactly this way, which is why the recovery escalation in §6.2
 is configurable rather than compiled in. BehaviorTree.CPP 4.9.0 ships in the course image as a
 Nav2 dependency.
 
@@ -645,4 +696,4 @@ trap as §8, reached from a different direction. Leaves return `RUNNING` and get
 DWB weights path-following 1600× more than obstacle proximity (`PathAlign.scale: 32.0` versus
 `BaseObstacle.scale: 0.02`), so on a tight corner it hugs the wall until its footprint is
 inside it. Tuning the controller is explicitly out of scope for this project, so that route is
-kept as the honest-failure demonstration instead (§6, [`REPORT.md` §10.2](REPORT.md)).
+kept as the honest-failure demonstration instead (§6, [`REPORT.md` §5.3](REPORT.md)).
