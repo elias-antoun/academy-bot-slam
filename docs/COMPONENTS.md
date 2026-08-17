@@ -9,7 +9,8 @@ document sits between them: one entry per moving part.
 
 The whole design is organised around one rule from the brief: **the courier does not write a
 planner or a controller.** Nav2 already plans and drives; `acadbot_navigation`'s
-`nav2_params.yaml` is byte-for-byte untouched. Everything here is the mission layer above it —
+`nav2_params.yaml` is unmodified on this branch — [F3](#f3-nav2_paramsyaml--the-stack-we-plan-against-and-do-not-touch)
+documents what it configures and who chose it. Everything here is the mission layer above it:
 which goals to send, in what order, what to do when one fails, and how to tell a human.
 
 ---
@@ -24,7 +25,7 @@ which goals to send, in what order, what to do when one fails, and how to tell a
 | [C. The courier node](#c-the-courier-node) | construction · the service handler · job ids · goal acceptance · cancel and the deferred finish · the state machine · retry · the three endings · feedback on its own clock |
 | [D. Seeing it](#d-seeing-it) | location markers · `courier.rviz` |
 | [E. Localization seeding](#e-localization-seeding) | `initial_pose_seeder` · the advancing-stamp check · `amcl.yaml` and its two deliberate absences |
-| [F. Bringup and configuration](#f-bringup-and-configuration) | `courier.launch.py` ordering · `courier.yaml` |
+| [F. Bringup and configuration](#f-bringup-and-configuration) | `courier.launch.py` ordering · `courier.yaml` · the inherited `nav2_params.yaml` (Dijkstra, inflation, DWB critics) |
 | [G. The test harness](#g-the-test-harness) | stand-in Nav2 · cancel client · shell drivers |
 | [H. The behaviour tree (bonus)](#h-the-behaviour-tree-bonus) | `courier.xml` · `GoToLocation` · `courier_bt_server` · one config block for two engines · `mission:=fsm\|bt` |
 
@@ -887,6 +888,99 @@ The file carries a long comment block explaining that coordinates are in the **m
 of walls, and which two coordinates were moved after measurement and why. That is the one
 place in this package where heavy comments earn their keep: someone editing coordinates needs
 the frame explained, and needs to know why `lab_bench` is not in the obvious corner.
+
+## F3. `nav2_params.yaml` — the stack we plan against, and do not touch
+
+**What it is.** `acadbot_navigation/config/nav2_params.yaml`, ~330 lines configuring twelve
+Nav2 servers. **Not a component of this project** — it is course material, and it is documented
+here because every measurement in [`REPORT.md`](REPORT.md) is a measurement *of this
+configuration* and is meaningless without it.
+
+**Provenance, since it decides who is answerable for the results.** `git blame` puts every line
+below in the course's initial commit, `3b8d932`, authored by the instructor on 2026-06-30. The
+file has been modified once since — `165c76c`, which *appended* a `docking_server:` block
+because Nav2's stock bringup starts that server, it fails to configure without a `dock_plugins`
+entry, and the lifecycle manager then aborts the whole bringup and leaves every server
+INACTIVE. That commit predates this project, sits on `main`, and touched no planner or
+controller line. On the final-project branch,
+`git log main..HEAD -- ros2_ws/src/acadbot_navigation/` is **empty**.
+
+### The global planner — Dijkstra
+
+```yaml
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false          # ← Dijkstra, not A*
+      allow_unknown: true
+```
+
+`NavfnPlanner` propagates a potential field outward from the goal across the global costmap,
+then extracts the route by gradient descent from the robot's cell. `use_astar: false` makes
+that propagation uniform-cost, which is **Dijkstra**; `true` would add a heuristic and expand
+fewer cells. At 160 × 120 cells the saving is milliseconds against a 20 Hz budget.
+
+| parameter | value | what it decides |
+|---|---|---|
+| `use_astar` | `false` | Dijkstra rather than A\* |
+| `tolerance` | 0.5 m | accept a plan ending this far from an unreachable goal |
+| `allow_unknown` | `true` | never-observed cells are traversable |
+
+**"Path cost" is not distance.** It is accumulated per-cell cost from the costmap layers, so
+what the planner minimises is set by the inflation parameters below, not by geometry.
+
+### The costmaps — what makes cost mean something
+
+Identical in both `local_costmap` and `global_costmap`:
+
+```yaml
+robot_radius: 0.20
+resolution: 0.05
+inflation_layer:
+  plugin: "nav2_costmap_2d::InflationLayer"
+  cost_scaling_factor: 3.0
+  inflation_radius: 0.45
+```
+
+The inflation layer paints an exponentially decaying cost halo out to 0.45 m around every
+obstacle, so the cheapest route is a compromise between short and clear-of-walls. Two numbers
+here are load-bearing elsewhere in this document: `inflation_radius: 0.45` is the clearance a
+location in `courier.yaml` must have (F2, B4), and `robot_radius: 0.20` is why a robot stopped
+0.175 m from a wall face has its own footprint inside that wall ([`REPORT.md` §5.3](REPORT.md)).
+
+### The controller — DWB, which minimises nothing globally
+
+```yaml
+FollowPath:
+  plugin: "dwb_core::DWBLocalPlanner"
+  max_vel_x: 0.26 ; max_vel_theta: 1.0
+  vx_samples: 20  ; vtheta_samples: 20
+  sim_time: 1.7
+```
+
+400 sampled `(v, ω)` pairs per cycle, each rolled forward 1.7 s, each scored by a weighted sum
+of critics, best one published — 20 times a second. It is sampling and scoring, not search.
+
+| critic | scale |
+|---|---|
+| `PathDist`, `PathAlign`, `RotateToGoal` | 32.0 |
+| `GoalDist`, `GoalAlign` | 24.0 |
+| `Oscillation` | (enabled, unweighted here) |
+| **`BaseObstacle`** | **0.02** |
+
+**Path adherence is weighted 1600× obstacle proximity.** This single ratio is the direct cause
+of the one route this project cannot complete, and it is inherited, not chosen.
+
+### Why none of it was changed
+
+The brief: *"you do not write a planner or a controller."* Beyond that, `nav2_params.yaml` is
+shared with Sessions 3 and 4, which are presumably tuned around its current behaviour —
+so raising `BaseObstacle.scale` to fix one courier route would silently change the demo every
+other session depends on. The route is kept as the honest-failure demonstration instead.
 
 ---
 
