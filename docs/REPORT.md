@@ -25,6 +25,7 @@ built, what it measured, and what broke.
 | [8. Engineering](#8-engineering) | build, tests, commits |
 | [9. What I would do next](#9-what-i-would-do-next) | |
 | [10. Presentation appendix](#10-presentation-appendix) | slides, demo script, questions |
+| [11. Bonus: the same mission as a behaviour tree](#11-bonus-the-same-mission-as-a-behaviour-tree) | what it deleted, what it cost, three bugs it introduced |
 
 ---
 
@@ -55,6 +56,12 @@ attempts_used: 3
 Goal finished with status: SUCCEEDED       # ~50 s, 0 recoveries
 ```
 
+**Plus the bonus:** the same mission implemented a second time as a **BehaviorTree.CPP** tree
+(§11). `mission:=bt` runs it over the identical service and action; the state machine is
+byte-for-byte untouched. Both engines produce identical results on identical inputs, and the
+tree costs about **0.4 s** more per two-leg delivery — which turns out to be the tick rate, not
+the tree.
+
 **Two numbers worth the whole report.** The one route that does not complete —
 `reception → lab_bench` — fails because DWB weights path-following **1600×** more than
 obstacle proximity (`PathAlign.scale: 32.0` vs `BaseObstacle.scale: 0.02`) and drives its own
@@ -62,7 +69,8 @@ footprint into a wall. And the hardest single problem, seeding AMCL without a mo
 **four** attempts at the verification alone — the first three each *passed while the system
 was broken*.
 
-Scale: 2 packages, 2 nodes, ~1,100 lines of C++, 26 commits.
+Scale: 2 packages, 3 nodes, 2 interchangeable mission engines, ~2,260 lines of C++ and 74 of
+tree XML, 40 commits.
 
 ---
 
@@ -128,7 +136,7 @@ the action runs would let an edit to `courier.yaml` move the target of a job alr
 | package | contents |
 |---|---|
 | `acadbot_courier_msgs` | `RequestDelivery.srv`, `ExecuteDelivery.action` |
-| `acadbot_courier` | `courier_server`, `initial_pose_seeder`, config, launch, rviz |
+| `acadbot_courier` | `courier_server`, `courier_bt_server`, `initial_pose_seeder`, config, launch, rviz, `behavior_trees/` |
 
 Interfaces are their own package so consumers can depend on the contract without dragging in
 the node that implements it.
@@ -159,6 +167,11 @@ The one genuinely subtle piece is `CancelReason`. A `CANCELED` result from Nav2 
 the client cancelled, our leg timeout gave up, or Nav2 abandoned the goal by itself. Three
 outcomes, so the *reason* is recorded when the cancel is issued rather than guessed at when
 the result lands.
+
+This is one of the two mission engines. The same logic exists a second time as a
+BehaviorTree.CPP tree in `courier_bt_server`, selected with `mission:=bt`, over the identical
+service and action — §11. The state machine described here is unchanged by its existence, which
+is deliberate: it is the verified implementation and the demo fallback.
 
 ### 2.4 Configured versus deliberately fixed
 
@@ -252,6 +265,23 @@ accident rather than a contrived test: Nav2 genuinely exhausted its recoveries o
 With `reception → lab_bench` failing reproducibly, tested `charging_dock → storage` on the
 **stock** stack — no tuning, nothing modified. It completes. That became the delivery to
 demonstrate, and the failing route was kept deliberately as the honest-failure demonstration.
+
+### Phase 9 — The behaviour tree, and a review that paid for itself
+
+Only after all nine requirements were verified. The tree was written, it compiled, and it ran a
+delivery — at which point a deliberate review found **three** defects in it, each one something
+the state machine already handled correctly (§11.4). One of them would have left the robot
+driving after the client was told the delivery was cancelled.
+
+The lesson is about sequencing rather than about trees: a second implementation of working
+behaviour is *the* situation where "it ran successfully" is worthless as evidence, because the
+happy path is the easy part and it is already known to be reachable. What the review actually
+did was compare the new code against the old one line by line, asking of every piece of state in
+`courier_server.hpp` where it went. Two of the three bugs fell straight out of that question.
+
+Phase 9 also produced the only tooling kept in the repository,
+[`tools/fake_nav2.py`](../tools/fake_nav2.py) — the scratchpad version had been lost once
+already, and it was the thing that made all three fixes verifiable in seconds.
 
 ---
 
@@ -582,11 +612,18 @@ Interfaces generate cleanly and are confirmed with `ros2 interface show`.
 surfaced one file at a time rather than in a heap at first link.
 
 **The stand-in Nav2** is the piece of tooling that paid for itself most. A `rclpy`
-`navigate_to_pose` server that succeeds, aborts, hangs or rejects on command turned a
-two-minute test cycle into five seconds and made the failure paths reproducible on demand.
-Requirements 3, 4, 6 and 7 were all developed against it before the real stack was involved.
+`navigate_to_pose` server that aborts, stalls or succeeds on command turned a two-minute test
+cycle into three seconds and made the failure paths reproducible on demand. Requirements 3, 4,
+6 and 7 were all developed against it before the real stack was involved, and every one of the
+behaviour tree's three defects was confirmed fixed against it (§11.4).
 
-**Commits.** 26, each one change with the reasoning in the body — including the ones that
+It is the only tooling kept in the repository, at [`tools/fake_nav2.py`](../tools/fake_nav2.py),
+and that decision was made the hard way — the scratchpad version was lost once and rewritten.
+Its two later switches exist because the real stack *cannot* produce the conditions they create:
+`FAIL_GOALS` makes a specific attempt fail on demand, and `ACCEPT_DELAY` holds open a cancel
+window that is a few milliseconds wide on a real Nav2.
+
+**Commits.** 40, each one change with the reasoning in the body — including the ones that
 record a wrong turn, because `d065d7e`'s explanation of why `set_initial_pose` cannot work is
 worth more than the two lines it deleted.
 
@@ -594,11 +631,18 @@ worth more than the two lines it deleted.
 
 ## 9. What I would do next
 
-- **The behaviour-tree bonus.** BehaviorTree.CPP 4.9.0 ships in the image. `RetryUntilSuccessful`
-  and `Timeout` are built-in decorators, so the two fiddliest parts of the state machine —
-  per-leg retry and the leg timeout, which together forced the `CancelReason` enum — become
-  two XML attributes. Keeping the FSM alongside, selected by a launch argument, makes the
-  comparison itself the deliverable.
+- ~~**The behaviour-tree bonus.**~~ **Done** — §11. It landed as predicted:
+  `RetryUntilSuccessful` and `Timeout` replaced the per-leg retry and the leg timeout, and
+  keeping the state machine alongside under `mission:=fsm|bt` made the comparison the
+  deliverable. What was *not* predicted is that reimplementing verified behaviour would
+  introduce three defects, one of them serious (§11.4).
+- **Share the plumbing between the two engines** — but only now that both are trusted. About
+  500 lines are duplicated, which was the right call while the tree was unproven and is the
+  wrong one to leave standing. A common `JobDesk` holding the service, the job registry and the
+  feedback timer would leave each engine as nothing but its mission logic, which is what the
+  comparison is actually about.
+- **Raise the tick rate, or measure what it should be.** 10 Hz costs 0.4 s per delivery (§11.3)
+  and was chosen by intuition. The right number is a measurement, not a guess.
 - **A queue.** "One job at a time" is a real limitation, honestly stated. A queue means
   deciding what cancel means for a job that has not started.
 - **Bounded job history.** `jobs_` grows for the life of the process so replayed ids can be
@@ -627,7 +671,12 @@ worth more than the two lines it deleted.
 8. **What broke: the corner.** `(3.25, 0.90)`, 0.175 m from a wall, 0.20 m radius.
    `BaseObstacle.scale: 0.02` vs `PathAlign.scale: 32.0`.
 9. **Results.** The nine-requirement table from §0.
-10. **What I would change.** The BT; the queue; the sequencing mistake in Phase 2.
+10. **Bonus: the same mission as a behaviour tree.** `courier.xml` beside the four members and
+    three callbacks it replaces; the identical demo commands; +0.4 s, which is the tick rate.
+    And the three bugs the review found — one of which left the robot driving after the client
+    was told CANCELED (§11.4).
+11. **What I would change.** The queue; the sequencing mistake in Phase 2; sharing the plumbing
+    between the two engines once both are trusted.
 
 ### 10.2 Live demo, in order
 
@@ -648,10 +697,21 @@ ros2 action send_goal /execute_delivery \
 
 # 4. an honest failure
 #    reception -> lab_bench, or drop an obstacle in the corridor during (2)
+
+# 5. the bonus: the same demo, run by the behaviour tree
+#    relaunch with mission:=bt, then repeat (2) verbatim -- the commands do not change
+ros2 launch acadbot_courier courier.launch.py mission:=bt
 ```
 
 Keep the feedback stream visible; keep RViz showing the location markers with the current
 target highlighted.
+
+Step 5 is the point of the bonus and it needs saying out loud, because *nothing visibly
+happens*: the service, the action, the feedback fields and the RViz view are identical, and the
+only difference on screen is the node name in the log prefix. Show
+[`courier.xml`](../ros2_ws/src/acadbot_courier/behavior_trees/courier.xml) beside it — 30 lines
+that replace the retry counter, the retry timer, the leg timeout and the leg sequencing — and
+then the four decorators are the whole argument (§11.1).
 
 ### 10.3 Questions to expect
 
@@ -682,3 +742,179 @@ Sequence Phase 2 later — the early code never needed real coordinates, and val
 first turned into a Nav2 investigation. And write the verification before the fix: the AMCL
 seeder was correct on the first try, but three successive checks reported success on a broken
 system.
+
+**You built the mission twice. Which one would you ship?**
+The state machine, for this mission — see §11.5. The tree wins as soon as the mission grows
+priorities and preconditions, and it is the right answer at Nav2's scale. At two legs it is a
+demonstration of a technique rather than a better courier, and it says so.
+
+---
+
+## 11. Bonus: the same mission as a behaviour tree
+
+### 11.1 What was built, and what was deliberately not
+
+A second executable, `courier_bt_server`, running the delivery from
+[`courier.xml`](../ros2_ws/src/acadbot_courier/behavior_trees/courier.xml) instead of the
+hand-written leg loop. `mission:=fsm|bt` selects one at launch; both claim the same service and
+action names, so **the client commands are identical** for either.
+
+Three constraints were set before writing anything:
+
+1. **`courier_server.cpp` is not touched.** It is verified and it is the demo fallback. A
+   comparison in which one side was disturbed to make room for the other proves nothing.
+2. **Duplicate the plumbing; do not refactor to share it.** The service handler, job registry,
+   feedback timer and marker publisher were copied — about 500 lines. Extracting a common base
+   class would have been better code and a worse decision: it puts working, verified behaviour
+   at risk to accommodate a bonus.
+3. **`nav2_params.yaml` stays untouched**, as everywhere else in this project.
+
+So the tree did **not** make the project smaller. Total lines went *up*:
+
+| | state machine | behaviour tree |
+|---|---|---|
+| mission engine | 751 lines C++ | 872 lines C++ + 74 XML |
+| of which plumbing duplicated from the other | — | ~500 |
+
+What shrank is the mission logic specifically. Four pieces of hand-written state have no
+counterpart in the tree at all:
+
+| gone from the tree | replaced by |
+|---|---|
+| `attempt_`, `max_retries_`, `retry_timer_`, `on_retry_elapsed()` | `RetryUntilSuccessful` |
+| `leg_timeout_timer_`, `on_leg_timeout()`, `CancelReason::LEG_TIMEOUT` | `Timeout` |
+| `leg_`, and the pickup→dropoff transition inside `on_nav_result` | `Sequence` |
+| "pickup failed, so do not attempt the dropoff" | `Sequence`, for free |
+
+Concretely: three dedicated callbacks totalling **63 lines** (`on_leg_timeout`,
+`on_retry_elapsed`, `leg_failed`), four members and two `create_wall_timer` calls, replaced by
+four XML decorators that nobody wrote and that every Nav2 installation in the world exercises
+daily. Retry count and leg timeout become an edit to a data file rather than a rebuild.
+
+### 11.2 Equivalence and cancellation, measured
+
+Both engines were run against [`tools/fake_nav2.py`](../tools/fake_nav2.py) with
+`FAIL_GOALS=1,3` — each leg aborts once, then succeeds — which is the shape that exposes
+per-leg bookkeeping.
+
+```
+state machine                          behaviour tree
+pickup  leg, attempt 1 of 3            leg: pickup,  attempt 1
+pickup  leg, attempt 2 of 3            leg: pickup,  attempt 2
+dropoff leg, attempt 1 of 3            leg: dropoff, attempt 1
+dropoff leg, attempt 2 of 3            leg: dropoff, attempt 2
+attempts_used: 4                       attempts_used: 4
+status: SUCCEEDED                      status: SUCCEEDED
+```
+
+Identical, including the distinction between per-leg `attempt` and cross-leg `attempts_used`.
+`FAIL_GOALS=1,2,3` exhausts a leg and both report `success: false`, `failed_leg: pickup`, with
+the dropoff never attempted.
+
+**Cancellation** was verified in both of its interesting cases. Cancelling mid-drive:
+
+```
+342.1938  BT cancel requested
+342.1938  GoToLocation: halted/cancelled
+342.1953  cancelled during the pickup leg     ← reported to the client, 1.5 ms
+342.2502  fake_nav2: goal 2: canceled         ← the drive actually stopped
+```
+
+And cancelling in the window before Nav2 has acknowledged the goal — forced open with
+`ACCEPT_DELAY=3`, because on the real stack it is a few milliseconds wide:
+
+```
+399.882  GoToLocation: halted/cancelled                      ← no goal handle yet
+401.990  goal acknowledged after the halt -- cancelling it
+401.999  fake_nav2: goal 1: canceled                         ← drive stopped
+```
+
+**One divergence that must not be read as a speed-up.** The state machine's measured 17 ms
+cancel (§4.4) waited for Nav2's CANCELED *result* before reporting. A halted tree has no result
+callback left to finish on, so the BT reports CANCELED while the stop is still in flight — hence
+1.5 ms. The goal is verifiably cancelled either way, as the traces above show, but **the two
+numbers measure different things** and comparing them would be dishonest.
+
+### 11.3 Timing: what a tick rate costs
+
+Identical two-leg deliveries, no failures, 1.0 s of driving per leg, wall-clock from goal sent
+to result received. The first run of the session was discarded as a cold start (4434 ms).
+
+| engine | runs | mean | spread |
+|---|---|---|---|
+| `courier_server` (FSM) | 3 | **2915 ms** | 2851–2973 |
+| `courier_bt_server` (BT) | 4 | **3360 ms** | 3153–3662 |
+
+**+445 ms**, and the explanation is arithmetic rather than architectural. A tree only changes
+state when it is ticked, and this one ticks at 10 Hz. A delivery has roughly four transitions
+(start pickup, pickup done, start dropoff, dropoff done), each of which can wait up to one full
+tick period: 4 × 100 ms = up to 400 ms. Measured 445 ms.
+
+So this is a **tuning** number, not a design cost. Ticking at 50 Hz would recover most of it and
+spend CPU instead. Worth knowing, and worth not over-reading: 0.4 s on a 50 s delivery is 0.9%.
+
+One further cost is structural rather than measured. The `Delay → AlwaysFailure` construction
+that gives the tree its inter-attempt pause also runs after the *final* attempt, so an exhausted
+leg waits one extra `retry_delay` before being declared failed. The state machine checks its
+counter first and reports immediately. Removing it means a scripted precondition inside the tree,
+which buys three seconds at the price of the readability that justifies the tree in the first
+place — so it was left in, and written down.
+
+### 11.4 Three bugs the second implementation introduced
+
+All three found by review rather than by running it — the delivery worked before any of them was
+fixed. All three were things the state machine already got right, which is the useful part: they
+are not tree bugs, they are *"reimplemented working behaviour and lost a detail"* bugs.
+
+**1 — the per-leg attempt counter never reset.** `courier_server.cpp` does `attempt_ = 0` at the
+leg transition; the tree version incremented forever, so feedback reported *attempt 4, 5, 6* on
+the dropoff. There was a second-order mistake underneath it: the leg was overwritten *before* the
+increment, so the code could not have detected the transition even if it had tried.
+
+Severity: cosmetic — the delivery completes correctly. Which is exactly why it survived a working
+end-to-end run, and why `FAIL_GOALS=1,3` exists.
+
+**2 — a cancel arriving before Nav2 acknowledged the goal was silently dropped.** `onHalted`
+cancelled only `if (nav_handle_)`, and in the window between `async_send_goal` and the
+goal-response callback there is no handle. Nothing was cancelled; the response then arrived and
+was stored into an already-halted node.
+
+Severity: **serious.** The tree stops, the client is told CANCELED, and the robot keeps driving to
+the pickup. The state machine handles this explicitly, with a comment saying so — this is a
+regression introduced by reimplementation, not an oversight in a new design. It is also
+essentially untestable on the real stack, where the window is a few milliseconds wide, which is
+why `ACCEPT_DELAY` was added to the harness. The trace in §11.2 is that test.
+
+**3 — Nav2 callbacks bound to an object with the wrong lifetime.** The callbacks captured `this`,
+and `this` is a *tree leaf*. A leaf dies with its tree, which happens when the next job calls
+`createTreeFromFile`. A result still in flight from a cancelled goal would then write into freed
+memory. Fixed with a `weak_ptr` liveness token; verified by inspection only, since triggering it
+needs a new job booked inside the few milliseconds while a cancelled goal's result is in flight.
+
+This one generalises furthest: **moving logic into a tree changes object lifetimes.** State that
+used to live as long as the process now lives as long as a tree, and every callback bound to it
+silently inherits that shorter life. Nothing in the compiler or the tree library warns about it.
+
+### 11.5 What the tree is actually worth
+
+**For this mission, the state machine is the better implementation**, and the tree is a
+demonstration of a technique. Two legs, one retry rule and one timeout do not need a tree; every
+transition in the state machine is a readable line with a place to put a breakpoint, and the
+tree's control flow is a property of tick traversal over a data file.
+
+**The tree is unambiguously right one scale up.** Add "if the battery is low, dock first",
+"if the corridor is blocked, wait and re-plan", "on three failures, ask a human" — and the state
+machine becomes a combinatorial mess of flags while the tree grows a subtree and a priority. That
+is exactly why Nav2's own navigator is a behaviour tree: recovery escalation is configuration
+there, and it is `#ifdef`-free.
+
+**The honest summary is that it restructured the easiest part of the project.** The three genuinely
+hard problems here were the async discipline (§7), seeding AMCL under simulated time (§5.1) and a
+controller that cuts corners (§5.3). A behaviour tree helps with none of them — and the async
+discipline it *does* touch, it makes no easier: `StatefulActionNode` exists precisely because a
+tick must not block, which is the same rule, restated.
+
+What it did prove, and what makes it worth the bonus: **the mission logic and the interface are
+genuinely separable.** Two engines, one service, one action, one config block, identical observed
+behaviour on identical inputs. That the swap is invisible to the client is the strongest evidence
+in this report that the layering was right.

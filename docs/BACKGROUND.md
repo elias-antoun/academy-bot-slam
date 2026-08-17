@@ -110,7 +110,7 @@ globally correct, occasional jumps. Each layer gets the property it needs.
 > **The single most common failure in this whole project** was `map → odom` not existing.
 > Without it the global costmap cannot configure, the Nav2 lifecycle manager times out and
 > aborts the entire bringup, and every goal afterwards is rejected. The symptom appears three
-> layers away from the cause. See [`REPORT.md` §8](REPORT.md).
+> layers away from the cause. See [`REPORT.md` §5.1](REPORT.md).
 
 ---
 
@@ -199,7 +199,7 @@ In Sessions 3 and 4 a human supplies it by clicking **2D Pose Estimate** in RViz
 of this project says *one command brings it up*, which means doing that without the mouse —
 and that turned out to be the single hardest part of the project. See
 [`initial_pose_seeder.cpp`](../ros2_ws/src/acadbot_courier/src/initial_pose_seeder.cpp) and
-[`REPORT.md` §8.2](REPORT.md).
+[`REPORT.md` §5.1](REPORT.md).
 
 ### 4.3 Measuring convergence
 
@@ -523,7 +523,7 @@ its timestamps agree — but it introduces failure modes that do not exist on a 
 
 Nearly every hard problem in this project traced back to one of those three. Four separate
 "is localization up?" checks were written before one was correct, and the first three each
-*passed while the system was broken*. [`REPORT.md` §8.2](REPORT.md) has the full autopsy; it
+*passed while the system was broken*. [`REPORT.md` §5.1](REPORT.md) has the full autopsy; it
 is the most useful thing in this repository to read twice.
 
 ---
