@@ -24,7 +24,8 @@ which goals to send, in what order, what to do when one fails, and how to tell a
 | [D. Seeing it](#d-seeing-it) | location markers · `courier.rviz` |
 | [E. Localization seeding](#e-localization-seeding) | `initial_pose_seeder` · the advancing-stamp check · `amcl.yaml` and its two deliberate absences |
 | [F. Bringup and configuration](#f-bringup-and-configuration) | `courier.launch.py` ordering · `courier.yaml` |
-| [G. The test harness](#g-the-test-harness-development-only) | stand-in Nav2 · cancel client · shell drivers |
+| [G. The test harness](#g-the-test-harness) | stand-in Nav2 · cancel client · shell drivers |
+| [H. The behaviour tree (bonus)](#h-the-behaviour-tree-bonus) | `courier.xml` · `GoToLocation` · `courier_bt_server` · one config block for two engines · `mission:=fsm\|bt` |
 
 ---
 
@@ -768,26 +769,57 @@ the frame explained, and needs to know why `lab_bench` is not in the obvious cor
 
 ---
 
-# G. The test harness (development only)
+# G. The test harness
 
-These live in the scratchpad, not the package. They are why requirements 3, 4, 6 and 7 could
-be exercised in seconds rather than minutes, and why cancel could be tested against an
-*abort on demand* instead of hoping the real robot misbehaved at the right moment.
+Why requirements 3, 4, 6 and 7 could be exercised in seconds rather than minutes, and why
+cancel could be tested against an *abort on demand* instead of hoping the real robot
+misbehaved at the right moment.
+
+Only G1 is kept in the repository, at [`tools/fake_nav2.py`](../tools/fake_nav2.py). G2 and G3
+were scratchpad-only and are recorded here rather than preserved — a decision made after G1 was
+lost once and had to be rewritten.
 
 ## G1. `fake_nav2.py` — a stand-in `navigate_to_pose`
 
-A `rclpy` action server that accepts `NavigateToPose` and behaves as instructed:
+A `rclpy` action server that accepts `NavigateToPose` and does exactly what it is told. Three
+environment variables, each isolating one thing the real stack hides:
 
-| `outcome` | behaviour |
-|---|---|
-| `succeed` | drive for `drive_time`, then SUCCEED |
-| `abort` | drive, then ABORT — as if recoveries were exhausted |
-| `hang` | accept and never finish, to trip `leg_timeout` |
-| `reject` | refuse every goal |
+| variable | behaviour | what it is for |
+|---|---|---|
+| `FAIL_GOALS=1,3` | abort those goals, succeed on the rest | one forced retry per leg |
+| `DRIVE_TIME=1.5` | seconds of pretend driving per goal | keeps a full delivery under 5 s |
+| `ACCEPT_DELAY=3` | stall before acknowledging a goal | opens the pre-acknowledge cancel window |
 
-It publishes decreasing `distance_remaining` and a nonzero `number_of_recoveries` so the
-courier's feedback path is exercised too. No Gazebo, no map, no costmap — the full state
-machine in about five seconds per scenario.
+It publishes decreasing `distance_remaining` so the courier's own feedback path is exercised
+too. No Gazebo, no map, no costmap — a two-leg delivery in about three seconds.
+
+`FAIL_GOALS=1,3` deserves a note, because it is the shape that catches a specific class of bug.
+It forces each leg to fail once and succeed on the second try, which is the only way to see
+whether the per-leg attempt counter *restarts* at the pickup→dropoff transition. It should read
+
+```
+pickup 1, pickup 2, dropoff 1, dropoff 2      attempts_used: 4
+```
+
+A counter that never resets reads `dropoff 3, dropoff 4` instead — the delivery still succeeds,
+so nothing looks wrong until someone reads the feedback. That is exactly the bug this found in
+H2.
+
+`ACCEPT_DELAY` exists for the same reason in the opposite direction: on the real stack Nav2
+acknowledges a goal in a few milliseconds, so the window in which a cancel has *nothing to
+cancel yet* is far too narrow to hit deliberately. Holding it open for three seconds turns an
+un-testable race into a two-line test.
+
+**Two traps in the harness itself**, both of which read as bugs in the code under test:
+
+- Its `execute` callback blocks while pretending to drive, so the action server must be
+  reentrant and spun by a `MultiThreadedExecutor`. A single-threaded executor sitting inside
+  `execute` cannot service the cancel request meant to interrupt it: the goal runs to
+  completion and the cancel is handled afterwards, which looks precisely like a courier that
+  ignores cancellation.
+- Calling `spin_once()` from inside that callback raises `Executor is already spinning`, which
+  the action server then reports as an **aborted goal** — so a harness bug arrives disguised as
+  Nav2 refusing to drive.
 
 ## G2. `cancel_client.py`
 
@@ -817,6 +849,236 @@ result", which reads as failure. That lesson generalises well past this project.
 
 ---
 
+# H. The behaviour tree (bonus)
+
+The same mission, run by a `BehaviorTree.CPP` tree instead of the hand-written state machine in
+group C. It is a **second executable**, not a replacement: `courier_server.cpp` is byte-for-byte
+untouched, and `mission:=fsm|bt` picks which one the launch file starts.
+
+That decision is worth stating plainly, because the alternative was tempting. Extracting the
+shared plumbing — the service handler, the job registry, the feedback timer, the markers — into
+a common base class would have avoided duplicating about 200 lines. It was rejected: the state
+machine version was finished, verified on the real stack, and is the demo fallback. A refactor
+to accommodate a bonus feature risks the thing that already works. **The duplication is the
+cheaper mistake.**
+
+What is *not* duplicated: `types.hpp`, `location_table.cpp` and `location_markers.cpp` compile
+into both executables unchanged, so the two engines cannot disagree about what a location is.
+
+## H1. `courier.xml` — the mission as data
+
+**What it is.** [`behavior_trees/courier.xml`](../ros2_ws/src/acadbot_courier/behavior_trees/courier.xml),
+30 lines, the entire delivery.
+
+**Why.** The interesting part is what is *absent* compared with `courier_server.hpp`:
+
+| hand-written in group C | replaced by |
+|---|---|
+| `attempt_`, `max_retries_`, `retry_timer_`, `on_retry_elapsed()` | `RetryUntilSuccessful` |
+| `leg_timeout_timer_`, `on_leg_timeout()`, `CancelReason::LEG_TIMEOUT` | `Timeout` |
+| `leg_` and the pickup→dropoff transition | `Sequence` |
+| "if the pickup failed, do not attempt the dropoff" | `Sequence`, for free |
+
+```xml
+<Sequence name="delivery">
+  <RetryUntilSuccessful num_attempts="{max_attempts}" name="pickup_attempts">
+    <Fallback>
+      <Timeout msec="{leg_timeout_msec}">
+        <GoToLocation pose="{pickup_pose}" location_name="{pickup_name}" leg="pickup"/>
+      </Timeout>
+      <Delay delay_msec="{retry_delay_msec}">
+        <AlwaysFailure/>
+      </Delay>
+    </Fallback>
+  </RetryUntilSuccessful>
+  <!-- leg 2: identical but for the target -->
+</Sequence>
+```
+
+**The one non-obvious construction** is that `Delay → AlwaysFailure` tail. The obvious way to
+express "wait 3 s between attempts" is to wrap the attempt in a `Delay` — and it is wrong: it
+would postpone the *first* attempt too, making every delivery three seconds slower than the
+state machine and quietly destroying the comparison. Putting the delay in the `Fallback`'s
+second branch means it runs only after something failed, which is what `leg_failed()` does.
+
+It has one residual difference, measured rather than assumed: on the **final** attempt the delay
+still runs before the leg is declared failed, where the state machine checks the counter first
+and reports immediately. Every exhausted leg therefore costs one extra `retry_delay`. Removing
+it would mean a scripted precondition on the node, which buys three seconds at the cost of the
+readability that justifies the tree.
+
+**Two legs are written out rather than factored into a `SubTree`.** Eight more lines, and the
+whole mission fits on one screen — which is the property that makes a tree worth having at all.
+
+## H2. `GoToLocation` — the only custom leaf
+
+**What it is.** [`bt_nodes.hpp`](../ros2_ws/src/acadbot_courier/include/acadbot_courier/bt_nodes.hpp)
+/ [`bt_nodes.cpp`](../ros2_ws/src/acadbot_courier/src/bt_nodes.cpp). Sends one Nav2 goal;
+`SUCCESS` if the robot arrived, `FAILURE` otherwise. It knows nothing about retries, timeouts or
+which leg comes next — those are the decorators wrapped around it.
+
+**Why a `StatefulActionNode`.** This is the same constraint as C7 in a new costume. A
+`SyncActionNode::tick()` that waited for Nav2 would block the executor thread — and that thread
+is the one that has to deliver the result the tick is waiting for. So:
+
+```cpp
+BT::NodeStatus GoToLocation::onStart()   // send, return RUNNING
+BT::NodeStatus GoToLocation::onRunning() // read a flag the callbacks set
+void           GoToLocation::onHalted()  // cancel the Nav2 goal
+```
+
+`pose` is a port carrying a `Pose2D`, **not** a location name, for the reason in B2: a job's
+targets are frozen at booking. Looking the name up here would let an edit to `courier.yaml` move
+the destination of an already-accepted delivery.
+
+**Three bugs a review found in the first version of this file**, all three of them things
+group C already got right. They are recorded because each is a category, not a typo.
+
+**1 — the per-leg attempt counter never reset.**
+
+```cpp
+context_.status->leg = (leg_name == "pickup") ? Leg::PICKUP : Leg::DROPOFF;
+...
+context_.status->attempt++;      // nothing ever set this back to 0
+```
+
+`courier_server.cpp` resets `attempt_ = 0` at the leg transition; this did not, so feedback
+reported *attempt 4, 5, 6* on the dropoff. Note the second-order mistake: `leg` is overwritten
+*before* the increment, so the code could not have detected the change even if it had tried. The
+fix compares first:
+
+```cpp
+const Leg leg = (leg_name == "pickup") ? Leg::PICKUP : Leg::DROPOFF;
+if (leg != context_.status->leg) {
+  context_.status->attempt = 0;   // retries are counted per leg
+}
+context_.status->leg = leg;
+```
+
+**2 — a cancel arriving before Nav2 acknowledged the goal was silently dropped.** `onHalted`
+only cancelled `if (nav_handle_)`. Halt inside the window between `async_send_goal` and the
+goal-response callback and there is no handle yet — so nothing was cancelled, and the response,
+when it arrived, was stored into an already-halted node. **The tree stops and the robot keeps
+driving**, while the client is told CANCELED. Group C handles this explicitly; the fix mirrors it:
+
+```cpp
+if (halted_) {
+  // The halt landed in the gap between sending the goal and Nav2
+  // acknowledging it. There was nothing to cancel then; there is now.
+  context_.nav_client->async_cancel_goal(handle);
+  return;
+}
+```
+
+**3 — the Nav2 callbacks captured `this`, and `this` is a tree leaf.** A leaf dies with its tree,
+which happens when the next job calls `createTreeFromFile`. A result still in flight from a
+cancelled goal would then write into freed memory. The state machine is immune because its
+callbacks target the *node*, which outlives everything. The fix is a liveness token:
+
+```cpp
+std::weak_ptr<bool> alive = alive_;          // expires with this leaf
+opts.result_callback = [this, alive](const NavGoalHandle::WrappedResult & r) {
+    if (alive.expired()) { return; }
+    on_result(r);
+  };
+```
+
+The pattern worth taking away: **moving logic into a tree changes object lifetimes.** State that
+used to live as long as the process now lives as long as a tree, and every callback bound to it
+inherits that shorter life.
+
+## H3. `LegStatus` — feedback that survives the gap
+
+**What it is.** A small struct holding the leg, the target name, the distance, the attempt, the
+recovery count and the state string. It lives on the *node*, and the leaf writes into it through
+the `NavContext`.
+
+**Why not in the leaf.** Because of a gap that only appears once the tree exists: between
+attempts the tree is sitting inside `Delay` with **no leaf running at all** — and the action
+still owes its client feedback at ≥1 Hz through exactly that window. Keeping the numbers beside
+the tree means the feedback timer can publish whatever the tree happens to be doing. It is the
+tree's version of C11's rule: publish on the courier's own clock, never on Nav2's.
+
+## H4. `courier_bt_server` — the plumbing, and the tick
+
+**What it is.** [`courier_bt_server.cpp`](../ros2_ws/src/acadbot_courier/src/courier_bt_server.cpp).
+Booking, the action server, the Nav2 client, the markers and the feedback timer — group C's, with
+the leg loop replaced by a tree.
+
+**The tick.** `handle_accepted` loads the blackboard from the frozen job and builds the tree; a
+10 Hz timer ticks it:
+
+```cpp
+BT::NodeStatus status = tree_.tickOnce();
+if (status == BT::NodeStatus::RUNNING) { return; }
+tree_running_ = false;
+if (status == BT::NodeStatus::SUCCESS) { finish_succeeded(); }
+else { finish_failed("the " + std::string(to_string(leg_status_->leg)) + " leg failed"); }
+```
+
+`tickOnce`, never `tickWhileRunning` — the latter loops until the tree finishes, which is the
+blocking call this entire design exists to avoid.
+
+**The blackboard, and a trap that is not guessable.** Port types are checked when the tree is
+*built*, not when it compiles:
+
+```cpp
+blackboard->set("max_attempts", max_retries_ + 1);                                 // int
+blackboard->set("leg_timeout_msec", static_cast<unsigned int>(leg_timeout_ * 1000.0));
+blackboard->set("retry_delay_msec", static_cast<unsigned int>(retry_delay_ * 1000.0));
+```
+
+`Timeout`'s `msec` and `Delay`'s `delay_msec` are `InputPort<unsigned>`;
+`RetryUntilSuccessful`'s `num_attempts` is `InputPort<int>`. Writing the first two as plain
+`int` compiles perfectly and then fails at runtime:
+
+```
+Tree creation error: the port [leg_timeout_msec] was initially created with
+type [int] and, later type [unsigned int] was used somewhere else.
+```
+
+A related one: **`name` cannot be used as a port.** BT.CPP owns that attribute for the node's own
+name, so the port is `location_name`.
+
+**Cancel.** `handle_cancel` halts the tree — which reaches `onHalted` and cancels the Nav2 goal —
+then finishes on a 1 ms timer, for C5's reason: the goal does not enter CANCELING until the
+callback returns. It differs from group C in one measurable way: the state machine waited for
+Nav2's CANCELED *result* before reporting, whereas a halted tree has no result callback left to
+finish on, so the BT reports CANCELED while the stop is still in flight. The Nav2 goal is
+verifiably cancelled either way — see [`REPORT.md` §11.2](REPORT.md) — but the two cancel
+latencies are not comparable numbers.
+
+## H5. One config block for two engines
+
+**What it is.** [`courier.yaml`](../ros2_ws/src/acadbot_courier/config/courier.yaml) is keyed
+`/**:` rather than by node name, so `courier_server` and `courier_bt_server` read the same block.
+
+**Why.** The first version had a block per node — and therefore two copies of the four
+locations. Two copies can drift, and a location edited in one and not the other would silently
+send the two engines to different coordinates, poisoning the one comparison the bonus exists to
+make. One block makes that impossible by construction.
+
+**Why not YAML anchors**, which are the obvious alternative: ROS 2's `rcl_yaml_param_parser`
+does not handle aliases reliably, and the resulting failure reads as a configuration bug rather
+than a parsing one. Verified after the change that both nodes still load all four locations, and
+that the state machine still reports `2 retries per leg, 120s leg timeout`.
+
+## H6. `mission:=fsm|bt`
+
+**What it is.** One launch argument; the two nodes sit under `IfCondition` on it.
+
+**Why exactly one runs.** Both claim `/request_delivery` and `/execute_delivery`. That is
+deliberate — the demo commands are then *identical* for either engine, which is the claim being
+demonstrated: same interface, different internals. Namespacing the BT node would have made the
+comparison harder to show and easier to fudge.
+
+One consequence worth knowing: the markers publisher is node-relative, so under the BT node it
+would become `/courier_bt_server/locations` and the RViz config would silently show nothing. A
+one-line remapping in the launch file puts it back on the FSM's topic, so `courier.rviz` works
+unchanged for both.
+
+---
+
 ## Which requirement each component serves
 
 | Requirement | Components |
@@ -828,5 +1090,9 @@ result", which reads as failure. That lesson generalises well past this project.
 | 5 · drive with Nav2 | C7, C8, C12 |
 | 6 · cancel means stop | A2, C5, C6, C10 |
 | 7 · honest failure | B2, C8, C9, C10 |
-| 8 · everything in YAML | B3, B4, F2, C1 |
+| 8 · everything in YAML | B3, B4, F2, C1, H5 |
 | 9 · one command | E1, E2, E3, F1, D2 |
+| bonus · mission logic as a behaviour tree | H1–H6 |
+
+Group H satisfies requirements 3–7 a second time, through a different mechanism and over the
+same interfaces. Groups A, B, D, E and F serve both engines unchanged.
