@@ -163,3 +163,19 @@ how two of the four were found to be badly placed.
   which is fine at demo scale and would not be in a real building.
 - **Arrival means within Nav2's `xy_goal_tolerance`**, 0.20 m — the honest
   definition of "delivered" here.
+
+---
+
+## Bonus: Behavior Tree Engine (`mission:=bt`)
+
+This package provides two interchangeable implementations of the courier mission runner:
+1. **FSM State Machine (Default):** `courier_server`
+   ```bash
+   ros2 launch acadbot_courier courier.launch.py mission:=fsm
+   ```
+2. **Behavior Tree (Bonus):** `courier_bt_server` using `BehaviorTree.CPP v4` and `behavior_trees/courier.xml`:
+   ```bash
+   ros2 launch acadbot_courier courier.launch.py mission:=bt
+   ```
+Both implementations expose the identical `/request_delivery` service and `/execute_delivery` action.
+
