@@ -255,28 +255,71 @@ each gets the frame whose properties it needs.
 These are two different jobs done by two different servers, and blaming the wrong one wastes
 hours.
 
-**The planner** (`planner_server`, running `navfn` here) draws a route from A to B across the
-global costmap. It is a graph search — Dijkstra by default, A\* optionally. It runs
-occasionally, thinks globally, and knows nothing about wheels.
-
-**The controller** (`controller_server`, running **DWB**) turns that route into velocity
-commands at 20 Hz. DWB stands for Dynamic Window Approach: each cycle it samples many
-achievable `(v, ω)` pairs, simulates each forward ~1.7 s, scores the resulting trajectories
-with a set of **critics**, and publishes the best one.
-
-The critics and their weights are the controller's personality:
+**The planner** (`planner_server`) draws a route from A to B across the global costmap. It runs
+occasionally, thinks globally, and knows nothing about wheels. Here it is configured as:
 
 ```yaml
-critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
-          "PathAlign", "PathDist", "GoalDist"]
-BaseObstacle.scale: 0.02      # how much it cares about being near obstacles
-PathAlign.scale: 32.0         # how much it cares about following the route
-PathDist.scale: 32.0
+GridBased:
+  plugin: "nav2_navfn_planner::NavfnPlanner"
+  use_astar: false        # ← Dijkstra
+  tolerance: 0.5
+  allow_unknown: true
 ```
+
+**So the algorithm minimising path cost in this project is Dijkstra.** `NavFn` propagates a
+potential field outward from the goal across every reachable cell of the global costmap, then
+extracts the route by walking downhill through that field from the robot's position.
+`use_astar: false` makes the propagation uniform-cost — full Dijkstra. Setting it `true` adds a
+straight-line heuristic so fewer cells are expanded.
+
+At this scale the choice barely matters: the map is 160 × 120 cells, so a complete expansion is
+under 20,000 cells and finishes far inside the 20 Hz `expected_planner_frequency`. A\* would
+save milliseconds. On a building-sized map the difference becomes real.
+
+**What "cost" means here is the part worth understanding**, because it is not distance. Each
+cell's cost comes from the costmap layers of §5 — and the inflation layer paints an
+exponentially decaying halo (`cost_scaling_factor: 3.0`) out to `inflation_radius: 0.45` around
+every obstacle. So the cheapest path is a *compromise* between short and far-from-walls, and
+tuning inflation changes what "shortest" means. The other two settings matter as much:
+`allow_unknown: true` permits planning through never-observed cells, and `tolerance: 0.5`
+accepts a plan finishing within half a metre when the exact goal pose is unreachable.
+
+**The controller** (`controller_server`, running **DWB**) turns that route into velocity
+commands at 20 Hz. DWB stands for Dynamic Window Approach, and it is **not a search at all** —
+which is the distinction most worth taking from this section. Each cycle it:
+
+```yaml
+FollowPath:
+  plugin: "dwb_core::DWBLocalPlanner"
+  max_vel_x: 0.26 ; max_vel_theta: 1.0
+  vx_samples: 20  ; vtheta_samples: 20
+  sim_time: 1.7
+```
+
+samples 20 × 20 = **400** achievable `(v, ω)` pairs, forward-simulates each for 1.7 s, scores
+the 400 resulting trajectories, and publishes the winner. No graph, no path being minimised —
+a one-shot choice among 400 candidate futures, repeated 20 times a second.
+
+The scoring is a weighted sum of **critics**, and their weights are the controller's
+personality:
+
+| critic | scale | what it rewards |
+|---|---|---|
+| `PathDist`, `PathAlign` | 32.0 | staying on and aligned with the planner's route |
+| `RotateToGoal` | 32.0 | turning to the goal heading on arrival |
+| `GoalDist`, `GoalAlign` | 24.0 | making progress toward the goal pose |
+| `Oscillation` | — | not dithering back and forth |
+| **`BaseObstacle`** | **0.02** | **not being near obstacles** |
 
 Read those numbers: **path-following is weighted 1600× more than obstacle proximity.** DWB as
 configured will hug a wall to stay on its line. That is the direct cause of the one route this
-project could not make work — see [`REPORT.md` §10.2](REPORT.md).
+project could not make work — see [`REPORT.md` §5.3](REPORT.md).
+
+**None of these values are this project's.** The planner choice, the critic weights and the
+inflation radius all arrived in the course's initial commit; `git blame` attributes every line
+to the instructor, and `acadbot_navigation` is unmodified on the final-project branch. That is
+the brief's rule — *you do not write a planner or a controller* — visible in the history rather
+than merely asserted ([`REPORT.md` §2.5](REPORT.md)).
 
 ### 6.1 Recovery behaviours
 
@@ -540,8 +583,10 @@ is the most useful thing in this repository to read twice.
 | particle | one hypothesis about the robot's pose | 500–2000 of them |
 | costmap | the map plus obstacles plus inflation, as cost | `global_costmap`, `local_costmap` |
 | inflation radius | halo of cost around obstacles; 0.45 m here | `nav2_params.yaml` |
-| planner | draws the global route (`navfn`) | `planner_server` |
-| controller | turns the route into wheel speeds (DWB) | `controller_server` |
+| planner | draws the global route — `NavfnPlanner`, **Dijkstra** (`use_astar: false`) | `planner_server` |
+| path cost | accumulated costmap cell cost, not distance — inflation shapes it | `inflation_radius: 0.45` |
+| controller | scores 400 sampled trajectories, picks one (DWB) | `controller_server` |
+| critic | one term in DWB's weighted trajectory score | `BaseObstacle.scale: 0.02` |
 | recovery | clear / spin / back up / wait when stuck | `behavior_server` |
 | lifecycle node | node with configure → activate states | `map_server`, `amcl`, all Nav2 servers |
 | topic / service / action | broadcast / function call / long cancellable job | §7 |
