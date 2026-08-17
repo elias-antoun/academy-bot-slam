@@ -49,7 +49,7 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
                             TimerAction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -129,15 +129,29 @@ def generate_launch_description():
     delayed_nav2 = TimerAction(
         period=LaunchConfiguration('nav2_delay'), actions=[nav2])
 
-    # Started immediately rather than with Nav2. Until navigate_to_pose comes
-    # up the service rejects bookings with a reason saying so, which is the
-    # behaviour we want anyway.
-    courier = Node(
+    # The mission runner: either the baseline FSM (courier_server) or the
+    # Behavior Tree bonus implementation (courier_bt_server).
+    mission = LaunchConfiguration('mission')
+    use_fsm = PythonExpression(["'", mission, "' == 'fsm'"])
+    use_bt = PythonExpression(["'", mission, "' == 'bt'"])
+
+    courier_fsm = Node(
         package='acadbot_courier',
         executable='courier_server',
         name='courier_server',
         output='screen',
         parameters=[courier_params],
+        condition=IfCondition(use_fsm),
+    )
+
+    courier_bt = Node(
+        package='acadbot_courier',
+        executable='courier_bt_server',
+        name='courier_bt_server',
+        output='screen',
+        parameters=[courier_params],
+        remappings=[('~/locations', '/courier_server/locations')],
+        condition=IfCondition(use_bt),
     )
 
     rviz = Node(
@@ -149,6 +163,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('mission', default_value='fsm',
+                              description="Mission engine: 'fsm' (State Machine) or 'bt' (Behavior Tree)."),
         DeclareLaunchArgument('map', default_value=default_map),
         DeclareLaunchArgument(
             'headless', default_value='false',
@@ -170,6 +186,7 @@ def generate_launch_description():
         localization,
         seeder,
         delayed_nav2,
-        courier,
+        courier_fsm,
+        courier_bt,
         rviz,
     ])
