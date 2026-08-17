@@ -415,30 +415,96 @@ feedback publishes. Explicit, debuggable, and every transition is visible in the
 
 ### 9.2 A behaviour tree
 
-The same logic as a *tree* of composable nodes, ticked repeatedly at some rate. The vocabulary:
+The same logic as a *tree* of composable nodes. Both versions are built here — the state
+machine in `courier_server` and the tree in `courier_bt_server` — so this is a description of
+working code, not of an alternative.
 
-- **Leaf / action nodes** do the work. Each tick returns `SUCCESS`, `FAILURE` or `RUNNING`.
-- **Sequence** runs children in order, stopping at the first `FAILURE`. This is "and then".
-- **Fallback** tries children in order until one succeeds. This is "or else".
-- **Decorators** wrap a single child and modify it — `RetryUntilSuccessful`, `Timeout`,
-  `Inverter`.
+**Ticking.** Nothing in a tree runs continuously. Something outside it calls `tickOnce()`, and
+that tick travels from the root down to whichever leaf is currently active. Every node returns
+one of three things:
 
-The payoff is that structure lives in an XML file you can edit without recompiling:
+| status | meaning |
+|---|---|
+| `SUCCESS` | this node finished, and it worked |
+| `FAILURE` | this node finished, and it did not work |
+| `RUNNING` | not finished — ask me again next tick |
+
+`RUNNING` is the whole idea. A leaf that drives a robot cannot answer in one tick, so it
+returns `RUNNING` and *is asked again*. The tick must never block: if a leaf sat waiting for
+Nav2 to arrive, the tick would never return, the executor would never run another callback,
+and the answer the leaf is waiting for could never be delivered — the deadlock from §8, in a
+new costume. In BehaviorTree.CPP the shape that expresses this correctly is a
+`StatefulActionNode`, with three entry points: `onStart` (fire the request), `onRunning`
+(called each tick — has the answer arrived?), and `onHalted` (someone stopped me; clean up).
+
+**The node types.** There are only four kinds, and that is the point:
+
+- **Action** — a leaf that does something. `GoToLocation` here.
+- **Condition** — a leaf that only answers a question, never acts.
+- **Control** — has many children and decides between them. **Sequence** runs them in order
+  and stops at the first `FAILURE` ("and then"); **Fallback** tries them in order until one
+  succeeds ("or else").
+- **Decorator** — wraps exactly *one* child and changes its meaning.
+  `RetryUntilSuccessful` re-runs a failing child N times; `Timeout` gives it a deadline;
+  `Delay` waits before running it; `Inverter` swaps success and failure.
+
+**Halting.** When a `Timeout` expires, it *halts* its child: the child's `onHalted` is called
+and it must abandon whatever it started — here, cancel the Nav2 goal. Halting is how a tree
+interrupts work that is still in progress, and it is the mechanism a cancelled mission uses
+too, from the root down.
+
+**The blackboard.** Nodes never call each other, so values move through a shared key–value
+store. In the XML, `location_name="{pickup_name}"` means *read the entry `pickup_name`*, while
+`leg="pickup"` is a literal. Each such attribute is a **port**, and ports are typed — a
+mismatch is caught when the tree is built. That check is stricter than it first looks:
+`Timeout`'s `msec` port is `unsigned`, so writing that entry as a plain `int` fails at *tree
+creation time* with a message about the entry having two types. It compiles perfectly.
+
+**Where structure lives.** Not in the source:
 
 ```xml
-<RetryUntilSuccessful num_attempts="3">
-  <Timeout msec="120000">
-    <GoToLocation leg="pickup" location="{pickup}"/>
+<RetryUntilSuccessful num_attempts="{max_attempts}">
+  <Timeout msec="{leg_timeout_msec}">
+    <GoToLocation pose="{pickup_pose}" location_name="{pickup_name}" leg="pickup"/>
   </Timeout>
 </RetryUntilSuccessful>
 ```
 
 That fragment is the courier's per-leg retry and timeout — the two fiddliest parts of the
-hand-written state machine — expressed as two decorators nobody had to write.
+hand-written state machine — as two decorators nobody had to write. The full tree is
+[`courier.xml`](../ros2_ws/src/acadbot_courier/behavior_trees/courier.xml), and changing how
+many times a leg is retried is an edit to it, not a rebuild.
 
 Nav2's own `bt_navigator` works exactly this way, which is why the recovery escalation in §6.1
 is configurable rather than compiled in. BehaviorTree.CPP 4.9.0 ships in the course image as a
 Nav2 dependency.
+
+### 9.3 What the tree actually buys, and what it costs
+
+The honest comparison, since both are built and both were measured
+([`REPORT.md` §11](REPORT.md)):
+
+**It buys deletion.** Four pieces of hand-written state disappear: the retry counter, the
+retry timer, the leg-timeout timer, and the leg variable with its pickup→dropoff transition.
+They become `RetryUntilSuccessful`, `Delay`, `Timeout` and `Sequence`. Less code cannot be
+wrong, and these particular decorators are used by every Nav2 installation in the world, so
+they are far better tested than anything written for one course project.
+
+**It costs directness.** In the state machine, every transition is a line you can read and a
+breakpoint you can set. In the tree, the control flow is in a data file and the order things
+happen in is a property of tick traversal. When the courier misbehaves, the state machine tells
+you where in the source to look; the tree tells you to reason about a graph.
+
+**And it does not touch the hard part.** The genuinely difficult things in this project were
+the async discipline (§8), seeding AMCL (§4.2), and a controller that cuts corners (§6). A
+behaviour tree helps with none of them. It restructures the easiest 15% of the work. That is a
+real benefit and worth having — but a tree is not a substitute for understanding what the
+robot is doing.
+
+The measured difference in behaviour is small and explainable: about **0.4 s slower per
+two-leg delivery**, because a tree only changes state when it is ticked, and this one is ticked
+at 10 Hz. Four transitions per delivery, up to 100 ms of latency each. Ticking faster costs
+CPU; that is the trade, and it is a *tuning* decision rather than a design flaw.
 
 ---
 
@@ -481,7 +547,12 @@ is the most useful thing in this repository to read twice.
 | topic / service / action | broadcast / function call / long cancellable job | §7 |
 | goal, feedback, result | the three parts of an action | [`ExecuteDelivery.action`](../ros2_ws/src/acadbot_courier_msgs/action/ExecuteDelivery.action) |
 | executor | the loop that runs callbacks | `rclcpp::spin` in [`main.cpp`](../ros2_ws/src/acadbot_courier/src/main.cpp) |
-| behaviour tree | mission logic as a ticked tree of nodes | §9.2, Nav2's `bt_navigator` |
+| behaviour tree | mission logic as a ticked tree of nodes | §9.2, [`courier.xml`](../ros2_ws/src/acadbot_courier/behavior_trees/courier.xml) |
+| tick | one traversal of the tree, root to active leaf | 10 Hz timer in `courier_bt_server` |
+| `RUNNING` | "not finished, ask me again" — the status that makes trees work | `GoToLocation::onRunning` |
+| decorator | node wrapping one child to change its meaning | `RetryUntilSuccessful`, `Timeout`, `Delay` |
+| halt | how a tree interrupts a child that is still working | `GoToLocation::onHalted` cancels the Nav2 goal |
+| blackboard / port | the typed key–value store nodes pass values through | `{pickup_pose}`, `{max_attempts}` |
 
 ---
 
@@ -507,7 +578,23 @@ spreading 2000 particles over 48 m² and 360° — too thin to converge reliably
 
 **Why doesn't your node need a mutex?**
 Because nothing in it blocks, so a single-threaded executor serializes every callback by
-construction. That is a deliberate design constraint, not luck (§8).
+construction. That is a deliberate design constraint, not luck (§8). It holds in the behaviour
+tree version too: ticks arrive on a timer, on the same thread as the Nav2 callbacks, so the
+flag a callback sets and the tick that reads it cannot race.
+
+**You built both a state machine and a behaviour tree. Which is better?**
+Neither, for this mission. The tree deletes four pieces of hand-written state — the retry
+counter, the retry timer, the leg timeout and the leg sequencing — and replaces them with
+decorators used by every Nav2 installation in existence. It gives that up in exchange for
+control flow that lives in a data file rather than in readable, breakpointable source. At two
+legs and one retry rule the state machine is easier to follow; at a dozen behaviours with
+priorities and preconditions the tree wins outright. What matters is that the tree changed
+*neither* interface and none of the hard parts of the project (§9.3).
+
+**Why can't a behaviour tree node just wait for Nav2 to finish?**
+Because the tick would never return. The thread that runs the tick is the same thread that
+delivers Nav2's reply, so a leaf that waits inside `tick()` deadlocks the whole node — the same
+trap as §8, reached from a different direction. Leaves return `RUNNING` and get asked again.
 
 **Why does one of your routes fail?**
 DWB weights path-following 1600× more than obstacle proximity (`PathAlign.scale: 32.0` versus
