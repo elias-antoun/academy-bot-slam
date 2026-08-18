@@ -195,6 +195,41 @@ package links against it, no tests depend on it, and every other package in the 
 plain executables. The sharing that does exist — `location_table.cpp` and `location_markers.cpp`
 compiling into both engines — needs no library to happen.
 
+**Why there are headers at all, and only these.** A header exists where a *second* translation
+unit needs the declaration — not one per class as a reflex. `courier_server.hpp` exists because
+`main.cpp` constructs the class; `location_table.hpp` because four other files use the table.
+There is no `bt_main.hpp`, because nothing includes `bt_main.cpp`. The alternative that was
+considered and rejected — one big `.cpp` per node with no headers — reads fine at 200 lines and
+badly at 583.
+
+**Where the behaviour tree lives, and why it is one XML file.** The tree structure is entirely in
+`behavior_trees/courier.xml`: one file, no `<SubTree>`, no `<include>`. The C++ around it is not
+a split of the tree but a different kind of thing, and the boundary is fixed rather than chosen:
+
+| in XML | in C++ |
+|---|---|
+| which nodes, in what order, wrapped in which decorators | what a custom node *does* |
+| `num_attempts`, `msec`, `delay_msec` — all tunable without a rebuild | the `rclcpp_action` client, the three callbacks, cancel-on-halt |
+| — | owning the ROS node, the executor, and calling `tickOnce()` |
+
+BT.CPP's XML **composes**; it cannot *define* a node. Everything in `courier.xml` except
+`GoToLocation` — `Sequence`, `RetryUntilSuccessful`, `Fallback`, `Timeout`, `Delay`,
+`AlwaysFailure` — ships compiled inside the library. `GoToLocation` sends a Nav2 goal, so it has
+to be C++. And XML does not run itself: something must own the executor and tick it, which is
+`courier_bt_server.cpp`. The XML is the score; the C++ is the orchestra and the conductor.
+
+Splitting the *tree* across several XMLs is supported and was rejected. The two legs are written
+out longhand rather than factored into a `DriveToLeg` subtree: it costs eight duplicated lines
+and buys the whole mission fitting on one screen, which is the main thing a tree has over the
+state machine. Subtree port remapping also adds ceremony — explicit remaps or `_autoremap` —
+around exactly the part a reader came to see. Nav2 ships a directory of tree XMLs because it has
+many distinct behaviours selected at runtime; one mission with two legs is not that case.
+
+**Why `tools/` is not a package.** `fake_nav2.py` is a test harness, not a deliverable. Making it
+an `ament_python` package would put it in the install space, give it a `package.xml` implying it
+is part of the robot, and add a build step to something run with `python3` directly. It sits at
+the repo root, outside `ros2_ws/src/`, so colcon never sees it.
+
 **One place this is arguably wrong** — `courier.launch.py` lives in `acadbot_courier`, where
 `acadbot_bringup` is home to every other one-command launch and requirement 9 is precisely a
 one-command bringup. The reason is worth stating exactly, because the obvious version of it is
@@ -337,6 +372,68 @@ of critics and publishes the winner, 20 times a second:
 proximity is the single most consequential number in this report — it is the direct cause of
 the one route that does not complete (§5.3) and the reason lowering the speed helped but did
 not fix it (§6.1).
+
+**The recovery behaviours: five are loaded, three ever run.** When planning or control fails,
+Nav2 escalates through recovery actions before giving up. `behavior_server` loads five plugins:
+
+```yaml
+behavior_server:
+  ros__parameters:
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait", "assisted_teleop"]
+    spin:             {plugin: "nav2_behaviors::Spin"}
+    backup:           {plugin: "nav2_behaviors::BackUp"}
+    drive_on_heading: {plugin: "nav2_behaviors::DriveOnHeading"}
+    wait:             {plugin: "nav2_behaviors::Wait"}
+    assisted_teleop:  {plugin: "nav2_behaviors::AssistedTeleop"}
+```
+
+But **that list only says what is available, not what is used.** Which recoveries actually fire
+is decided by the navigator's behaviour tree, and `bt_navigator` sets no
+`default_nav_to_pose_bt_xml` — so Nav2 falls back to its own built-in tree,
+`navigate_to_pose_w_replanning_and_recovery.xml`, which ships inside `nav2_bt_navigator` and is
+not in this repository at all. Its `RecoveryActions` node is a `RoundRobin`, cycling one action
+per failure, inside a `RecoveryNode number_of_retries="6"`:
+
+| order | action | parameters | plugin? |
+|---|---|---|---|
+| 1 | clear local **and** global costmap | — | no — a service call to the costmaps |
+| 2 | `Spin` | `spin_dist: 1.57` | `nav2_behaviors::Spin` |
+| 3 | `Wait` | `wait_duration: 5.0` | `nav2_behaviors::Wait` |
+| 4 | `BackUp` | `backup_dist: 0.30`, `backup_speed: 0.15` | `nav2_behaviors::BackUp` |
+
+There are two further single-retry recoveries inside the pipeline: a failed `ComputePathToPose`
+clears the global costmap and retries once, and a failed `FollowPath` clears the local costmap
+and retries once.
+
+So **`drive_on_heading` and `assisted_teleop` are configured and never invoked** — the default
+tree does not reference them. They cost nothing but they are dead configuration, and anyone
+reading `nav2_params.yaml` alone would reasonably conclude the robot might drive on a heading
+to get unstuck. It will not.
+
+**Who implemented them.** Upstream Nav2, in `nav2_behaviors` — the plugin sources sit at
+`/opt/ros/jazzy/include/nav2_behaviors/plugins/{spin,back_up,drive_on_heading,wait,assisted_teleop}.hpp`
+in the course image, and the behaviour-tree action nodes that call them are in
+`nav2_behavior_tree`. The instructor *selected and configured* them in `3b8d932`; `git blame`
+puts every line of the block above in that commit. **This project wrote none of them and
+invokes none of them directly.**
+
+**Where we use them: nowhere as a caller — only as an observer.** The courier never calls a
+recovery. It reads Nav2's running count out of `navigate_to_pose` feedback and republishes it,
+because it is the single most diagnostic number available to a human watching a delivery:
+
+| file | line | what it does |
+|---|---|---|
+| `acadbot_courier_msgs/action/ExecuteDelivery.action` | 34 | `uint16 nav2_recoveries` — the field |
+| `src/courier_server.cpp` | 312 | FSM reads `feedback->number_of_recoveries` |
+| `src/courier_server.cpp` | 530 | FSM republishes it on the courier's own timer |
+| `src/courier_server.cpp` | 364 | a Nav2 ABORT is reported as *"its recoveries were exhausted"* |
+| `src/bt_nodes.cpp` | 192 | BT leaf reads the same field into `LegStatus` |
+| `src/courier_bt_server.cpp` | 377 | BT engine republishes it |
+
+That number is what makes §4.3 readable: `charging_dock → storage` completes with **0
+recoveries**, `charging_dock` at its original coordinate cost **4** every visit, and the failing
+`reception → lab_bench` dropoff burns **15** before Nav2 gives up. Zero means a clean drive;
+fifteen means the robot is fighting the building.
 
 **Why none of it was changed**, beyond the brief's rule: `nav2_params.yaml` is shared with
 Sessions 3 and 4, which are presumably tuned around its current behaviour. Raising
