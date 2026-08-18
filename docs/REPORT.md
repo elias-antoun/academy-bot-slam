@@ -135,15 +135,69 @@ the action runs would let an edit to `courier.yaml` move the target of a job alr
 
 ### 2.2 Codebase structure, and why it is this and not something smaller
 
-Two new packages, three executables. The existing tree already had six packages and a launch-only
-`acadbot_bringup`, so "add a file to something that exists" was a live option and was rejected
-for reasons worth writing down. [`COMPONENTS.md` § The layout](COMPONENTS.md) is the
-file-by-file map; this is the argument.
+Two new packages, three executables, thirty tracked files. The existing tree already had six
+packages and a launch-only `acadbot_bringup`, so "add a file to something that exists" was a live
+option and was rejected for reasons worth writing down.
 
-| package | contents |
-|---|---|
-| `acadbot_courier_msgs` | `RequestDelivery.srv`, `ExecuteDelivery.action` |
-| `acadbot_courier` | `courier_server`, `courier_bt_server`, `initial_pose_seeder`, config, launch, rviz, `behavior_trees/` |
+```
+ros2_ws/src/
+├── acadbot_courier_msgs/               THE CONTRACT — what a client depends on
+│   ├── srv/RequestDelivery.srv         book a delivery: two names in, an id or a refusal out
+│   ├── action/ExecuteDelivery.action   run a booked job: goal, result, six feedback fields
+│   ├── CMakeLists.txt                  rosidl generation, nothing else
+│   └── package.xml                     no dependency on the implementation — that is the point
+│
+└── acadbot_courier/                    THE IMPLEMENTATION
+    │
+    ├── include/acadbot_courier/        a header exists where a 2nd .cpp needs the declaration
+    │   ├── types.hpp                   Pose2D, Leg, JobState, Job — the frozen poses live here
+    │   ├── location_table.hpp          name → pose lookup, and the rejection message
+    │   ├── location_markers.hpp        the RViz arrows
+    │   ├── courier_server.hpp          engine 1: Phase, CancelReason, every FSM member
+    │   ├── bt_nodes.hpp                engine 2: GoToLocation, LegStatus, NavContext
+    │   └── courier_bt_server.hpp       engine 2: the node that owns and ticks the tree
+    │
+    ├── src/                            three executables' worth of sources
+    │   │                               — shared by both engines —
+    │   ├── location_table.cpp          discovers locations from parameter overrides; refuses a
+    │   │                               bad floor plan at startup rather than at first delivery
+    │   ├── location_markers.cpp        draws the table, current target highlighted
+    │   │                               — engine 1: the state machine —
+    │   ├── courier_server.cpp          booking, action server, Nav2 client, retry, timeout,
+    │   │                               the three endings                            (583 lines)
+    │   ├── main.cpp                    single-threaded spin; a bad config dies loudly
+    │   │                               — engine 2: the behaviour tree (bonus) —
+    │   ├── bt_nodes.cpp                GoToLocation: onStart sends, onRunning polls,
+    │   │                               onHalted cancels. Nothing waits.
+    │   ├── courier_bt_server.cpp       the same plumbing, leg loop replaced by a 10 Hz tick
+    │   ├── bt_main.cpp                 as main.cpp, different class
+    │   │                               — making the demo need no mouse —
+    │   └── initial_pose_seeder.cpp     seeds AMCL and *verifies* it took, by requiring the
+    │                                   map→odom stamp to advance
+    │
+    ├── behavior_trees/courier.xml      the whole mission as data: two legs, retry, timeout,
+    │                                   inter-attempt delay. 30 lines, no SubTree.
+    ├── config/courier.yaml             locations and limits, one /**: block read by both
+    │                                   engines so they cannot drift apart
+    ├── launch/courier.launch.py        sim → localization → seed → Nav2 → courier → RViz,
+    │                                   in that order for reasons (§5.1)
+    ├── rviz/courier.rviz               map, costmaps, and the location markers
+    ├── CMakeLists.txt                  three targets; location_* compiles into both couriers
+    ├── package.xml
+    └── README.md                       how to run it, and what it does *not* do
+
+tools/                                  NOT BUILT — no package.xml, colcon never sees it
+├── fake_nav2.py                        a navigate_to_pose that aborts on command, so the
+│                                       courier is testable in seconds without Gazebo
+└── README.md                           the three switches, and two traps in the harness itself
+
+docs/                                   BACKGROUND · COMPONENTS · REPORT
+```
+
+Two things are absent by decision rather than oversight: there is no `config/amcl.yaml` — it
+existed for most of the project and turned out to set a parameter to its own default (§6.3) —
+and no intermediate library, for the reason given below. [`COMPONENTS.md` § The layout](COMPONENTS.md)
+maps the same files to the entries that explain each one.
 
 **Why the interfaces are a package of their own.** So a client can depend on the *contract*
 without dragging in the node that implements it. This is not hypothetical tidiness: the moment
