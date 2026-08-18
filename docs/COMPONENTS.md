@@ -24,7 +24,7 @@ which goals to send, in what order, what to do when one fails, and how to tell a
 | [B. Value types and the location table](#b-value-types-and-the-location-table) | `Pose2D` / `Leg` / `JobState` · `Job` and frozen poses · parameter-override discovery · the failure paths · `known_names()` |
 | [C. The courier node](#c-the-courier-node) | construction · the service handler · job ids · goal acceptance · cancel and the deferred finish · the state machine · retry · the three endings · feedback on its own clock |
 | [D. Seeing it](#d-seeing-it) | location markers · `courier.rviz` |
-| [E. Localization seeding](#e-localization-seeding) | `initial_pose_seeder` · the advancing-stamp check · `amcl.yaml` and its two deliberate absences |
+| [E. Localization seeding](#e-localization-seeding) | `initial_pose_seeder` · the advancing-stamp check · the AMCL params file that proved unnecessary |
 | [F. Bringup and configuration](#f-bringup-and-configuration) | `courier.launch.py` ordering · `courier.yaml` · the inherited `nav2_params.yaml` (Dijkstra, inflation, DWB critics) |
 | [G. The test harness](#g-the-test-harness) | stand-in Nav2 · cancel client · shell drivers |
 | [H. The behaviour tree (bonus)](#h-the-behaviour-tree-bonus) | `courier.xml` · `GoToLocation` · `courier_bt_server` · one config block for two engines · `mission:=fsm\|bt` |
@@ -51,7 +51,7 @@ ros2_ws/src/
     ├── include/acadbot_courier/     headers, one per translation unit
     ├── src/                         three executables' worth of sources
     ├── behavior_trees/courier.xml   the mission, as data (bonus)
-    ├── config/                      courier.yaml, amcl.yaml
+    ├── config/                      courier.yaml
     ├── launch/courier.launch.py     the whole stack, one command
     ├── rviz/courier.rviz
     ├── CMakeLists.txt
@@ -119,7 +119,6 @@ how to run a mission, but they cannot disagree about what a location *is*.
 |---|---|---|---|
 | `src/initial_pose_seeder.cpp` | 235 | seeds AMCL and *verifies* it worked, so requirement 9 needs no mouse | [E1](#e1-initial_pose_seeder), [E2](#e2-transform_advancing--the-check-that-took-four-attempts) |
 | `config/courier.yaml` | 73 | locations and limits, one `/**:` block read by both engines | [F2](#f2-courieryaml), [H5](#h5-one-config-block-for-two-engines) |
-| `config/amcl.yaml` | 75 | localization parameters — and two deliberate absences | [E3](#e3-amclyaml--two-deliberate-absences) |
 | `launch/courier.launch.py` | 192 | sim → localization → seed → Nav2 → courier → RViz, in that order for reasons | [F1](#f1-courierlaunchpy), [H6](#h6-missionfsmbt) |
 | `rviz/courier.rviz` | 105 | the map, the costmaps, and the location markers | [D2](#d2-courierrviz) |
 | `CMakeLists.txt` · `package.xml` | 94 | three targets; `behaviortree_cpp` and `ament_index_cpp` for engine 2 | [H4](#h4-courier_bt_server--the-plumbing-and-the-tick) |
@@ -839,28 +838,55 @@ RCLCPP_ERROR(get_logger(),
   "hand with RViz's 2D Pose Estimate.", give_up_after_);
 ```
 
-## E3. `amcl.yaml` — two deliberate absences
+## E3. Localization parameters — and the file that turned out to be unnecessary
 
-[`amcl.yaml`](../ros2_ws/src/acadbot_courier/config/amcl.yaml) carries the course's AMCL block
-verbatim plus `transform_tolerance`. Both things it *omits* are documented in the file,
-because both look like obvious things to add.
+The courier localizes with `nav2_bringup`'s `localization_launch.py` (`map_server` + `amcl` +
+their lifecycle manager) and hands it the course's own
+[`nav2_params.yaml`](../ros2_ws/src/acadbot_navigation/config/nav2_params.yaml). No AMCL
+parameter file of our own — and getting to that point took removing one.
 
-**No `map_server` block.** `nav2_bringup`'s `localization_launch.py` passes the map path to
-that node itself as `parameters=[params_file, {'yaml_filename': map_yaml_file}]` — and a
-`yaml_filename` written in the params file **wins over that override rather than losing to
-it**, leaving `map_server` active but empty and AMCL stuck on `Waiting for map....` forever.
+**The file that used to be here.** `config/amcl.yaml` existed for most of this project: 75
+lines holding the course's AMCL block verbatim plus `transform_tolerance: 1.0`, added during the
+seeding investigation because that value is also the window AMCL allows when looking up
+`base_footprint → odom` for an incoming initial pose.
+
+It was deleted after a key-by-key diff showed the two `amcl:` blocks were identical except for
+that one parameter — and then a direct query showed the parameter was already AMCL's default:
+
+```console
+$ ros2 run nav2_amcl amcl               # no params file at all
+$ ros2 param get /amcl_probe transform_tolerance
+Double value is: 1.0
+```
+
+Seventy-five lines that changed nothing. Worse than nothing: a frozen copy of someone else's
+AMCL block, which would silently keep stale values if the course ever retuned its particle
+counts or motion noise — exactly the drift argument used against duplicated location blocks in
+[H5](#h5-one-config-block-for-two-engines), applied in one place and violated in the other.
+
+Verified before removal, not after: with `nav2_params.yaml` supplying AMCL, the seeder still
+localizes, `/amcl` and `/bt_navigator` both reach `active [3]`, `map → odom` appears, and
+`charging_dock → storage` delivers in 56 s with `attempts_used: 2`.
+
+**Two absences worth keeping in mind**, because both look like obvious things to add and both
+cost a debugging session. Neither file has them, which is why neither is bitten:
+
+**No `map_server` block.** `localization_launch.py` passes the map path to that node itself as
+`parameters=[params_file, {'yaml_filename': map_yaml_file}]` — and a `yaml_filename` written in
+the params file **wins over that override rather than losing to it**, leaving `map_server`
+active but empty and AMCL stuck on `Waiting for map....` forever.
 
 **No `set_initial_pose`.** It looks like exactly the right tool. AMCL applies it the instant it
 activates — about 0.4 s after its process starts, before it has received a single `/clock`
 message — so under `use_sim_time` the pose is stamped **t = 0**, a time for which no
-`odom→base_footprint` has ever existed:
+`odom → base_footprint` has ever existed:
 
 ```
 [amcl] Setting pose (0.000000): 0.000 0.000 0.000
 ```
 
 Delaying the launch does not help: the race is between AMCL's own activation and its own first
-clock message, so it moves along with it.
+clock message, so it moves along with it. [E1](#e1-initial_pose_seeder) is the answer that works.
 
 ---
 

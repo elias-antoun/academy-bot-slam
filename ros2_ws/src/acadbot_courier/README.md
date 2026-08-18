@@ -89,9 +89,9 @@ Session 2 mapping started — its spawn point at Gazebo `(-3, -2)`. So
 `map = gazebo + (3, 2)`. Read new coordinates off RViz's **Publish Point** and
 keep them at least the costmap `inflation_radius` (0.45 m) clear of any wall.
 
-`config/amcl.yaml` holds the localization parameters. The Nav2 servers keep the
-course's own `acadbot_navigation/config/nav2_params.yaml` untouched: nothing
-about the planner, the controller or the recovery behaviours changes here.
+Localization and the Nav2 servers both take the course's own
+`acadbot_navigation/config/nav2_params.yaml`, untouched: nothing about AMCL,
+the planner, the controller or the recovery behaviours changes here.
 
 ---
 

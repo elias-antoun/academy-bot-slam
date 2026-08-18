@@ -259,42 +259,50 @@ the repo root, outside `ros2_ws/src/`, so colcon never sees it.
 one-command bringup. The reason is worth stating exactly, because the obvious version of it is
 wrong.
 
-`autonomy.launch.py` forwards no `params_file`. But one level down `navigation.launch.py` *does*
-accept one — and forwards **the same file to both** `localization_launch.py` (AMCL) and
-`nav2_stack.launch.py` (the twelve Nav2 servers). One file, two very different roles. So a
-pass-through argument on `autonomy.launch.py` would not have helped:
+`autonomy.launch.py` forwards no `params_file`, and one level down `navigation.launch.py`
+accepts a single one that it hands to **both** `localization_launch.py` (AMCL) and
+`nav2_stack.launch.py` (the twelve Nav2 servers). For most of this project that looked like a
+hard blocker: AMCL was given `acadbot_courier/config/amcl.yaml`, which holds an `amcl:` block and
+nothing else, so the same file could not also configure Nav2.
 
-| pass | result |
-|---|---|
-| `acadbot_courier/config/amcl.yaml` | contains only an `amcl:` block, so every Nav2 server loses the course's tuned parameters and starts on library defaults |
-| `acadbot_navigation/config/nav2_params.yaml` | Nav2 correct, AMCL missing what the courier needs |
+**That reasoning was wrong, and the investigation that killed it is the more useful result.**
+A key-by-key diff showed the courier's `amcl:` block and `nav2_params.yaml`'s were identical but
+for `transform_tolerance: 1.0`. Then a direct query showed that value is AMCL's own default:
 
-What is actually missing is a *second* argument — splitting `params_file` into one for the Nav2
-servers and one for localization — which is a signature change to a package Sessions 3 and 4
-depend on, not a small fix in a package this project owns. **Composing the stack rather than
-including `autonomy.launch.py` is therefore the right call**, and would remain so wherever the
-file lived.
+```console
+$ ros2 run nav2_amcl amcl               # no params file at all
+$ ros2 param get /amcl_probe transform_tolerance
+Double value is: 1.0
+```
 
-That is worth separating from the second question, because they are easy to run together and
-only the first is settled. *Composing versus including* is decided by the paragraph above.
-*Which package the file sits in* is not, and the evidence there points mildly the other way:
-`acadbot_bringup` already `exec_depend`s on all five implementation packages and its two launch
-files already reach into four of them through `get_package_share_directory`. A
-`courier.launch.py` there — composing the stack exactly as it does now, just from a different
-package — would be the established pattern rather than a departure from it. The argument for
-where it actually sits is narrower: the package ships runnable on its own, and a deliverable
-that can be added or removed without leaving a dangling launch file behind in a course package
-is worth something. A judgement call, made once, with low stakes either way.
+So `amcl.yaml` was 75 lines that changed no behaviour. It has been **deleted**, and
+`courier.launch.py` now passes `nav2_params.yaml` to localization and to Nav2 alike — one file,
+both roles, which is exactly what `navigation.launch.py` already assumes. Verified rather than
+assumed: `/amcl` and `/bt_navigator` both reach `active [3]`, the seeder still localizes,
+`map → odom` appears, and `charging_dock → storage` delivers in **56 s** with
+`attempts_used: 2` (§4.3).
 
-The gap it works around, however, is **one parameter**. Diffed key by key, the courier's
-`amcl.yaml` and `nav2_params.yaml`'s `amcl:` block are identical but for
-`transform_tolerance: 1.0` — which is there because it is also the window AMCL allows when
-looking up `base_footprint → odom` for an incoming initial pose, and that lookup asks for *now*
-while TF runs a few milliseconds behind (§5.1). So a third option exists and is arguably the
-cleanest: put that one line in the course's `amcl:` block, delete `config/amcl.yaml`, and the
-courier can include `navigation.launch.py` unchanged. It was not taken because it edits a shared
-course file to suit one project — but "the planner, the controller and the recovery behaviours
-stay untouched" is the rule this project actually committed to, and AMCL is none of those (§9).
+This also removes the argument that made `courier.launch.py` compose the stack instead of
+including `navigation.launch.py` — the params-file conflict it was working around does not
+exist. What remains before that move is possible is the *ordering*: the seeder has to run
+between localization and Nav2, and whether `navigation.launch.py`'s `nav2_delay` leaves room for
+that is unchecked (§9).
+
+Two lessons, and the second is the one worth keeping. First: **a duplicated config file that
+sets a parameter to its own default is worse than no file**, because it is a frozen copy — if
+the course retunes AMCL's particle counts or motion noise, the courier silently keeps the old
+values. That is the same drift argument used to justify a single `/**:` block in `courier.yaml`
+(§11.1, H5), applied in one place and violated in another for months. Second: the blocker was
+never measured. One `ros2 param get` against a bare node would have dissolved it at any point,
+and instead it shaped a launch file, a config file and three paragraphs of this report.
+
+**Where the launch file lives is a separate question, and still open.** `acadbot_bringup`
+already `exec_depend`s on all five implementation packages and its two launch files already
+reach into four of them through `get_package_share_directory`, so a `courier.launch.py` there
+would be the established pattern rather than a departure. The argument for its current home is
+narrower: the package ships runnable on its own, and a deliverable that can be added or removed
+without leaving a dangling launch file behind in a course package is worth something. A
+judgement call, with low stakes either way.
 
 ### 2.3 The state machine
 
@@ -688,7 +696,7 @@ cancel paths.
 
 ### Phase 6 — The launch, and the seeding problem
 
-`courier.launch.py`, `amcl.yaml`, `courier.rviz`. Then requirement 9's real difficulty: AMCL
+`courier.launch.py`, `courier.rviz`. Then requirement 9's real difficulty: AMCL
 publishes nothing until told where the robot is, and "one command" cannot mean "one command
 and then go and click something".
 
@@ -996,8 +1004,22 @@ because activation precedes the first `/clock` message. No delay fixes it.
 ### 6.3 `transform_tolerance` — a misreading of tf2
 
 Set to 1.0 expecting it to absorb a 7 ms overshoot. It does not: tf2 refuses **future**
-extrapolation regardless of tolerance, which only permits *stale* data. Kept in `amcl.yaml`
-anyway because it is correct to set explicitly and it does absorb the stale-side misses.
+extrapolation regardless of tolerance, which only permits *stale* data. It was kept in
+`amcl.yaml` anyway, on the reasoning that it is correct to set explicitly.
+
+**It was not even a change.** Months later, a direct query showed 1.0 is AMCL's own default:
+
+```console
+$ ros2 run nav2_amcl amcl               # no params file at all
+$ ros2 param get /amcl_probe transform_tolerance
+Double value is: 1.0
+```
+
+So this ablation is stronger than it first read. The parameter did not fail to fix the problem —
+it was never a modification at all, and the entire `amcl.yaml` that existed to carry it was
+75 lines of no-op (§2.2). The failed hypothesis cost one debugging session; *not measuring the
+supposed fix afterwards* cost a config file, a launch-file design decision, and three paragraphs
+of this report that argued from it.
 
 ### 6.4 Delaying localization — actively harmful
 
@@ -1084,14 +1106,11 @@ worth more than the two lines it deleted.
 - **Raise the tick rate, or measure what it should be.** 10 Hz costs 0.4 s per delivery (§11.3)
   and was chosen by intuition. The right number is a measurement, not a guess.
 - **Move `courier.launch.py` into `acadbot_bringup`**, where every other one-command launch
-  lives (§2.2). Two routes, and the cheap one is not the obvious one. *Obvious:* split
-  `navigation.launch.py`'s single `params_file` into one for Nav2 and one for localization —
-  correct, but a signature change to a package Sessions 3 and 4 depend on. *Cheap:* add
-  `transform_tolerance: 1.0` to the course's `amcl:` block, which is the **only** thing the
-  courier's `amcl.yaml` adds, then delete that file and include `navigation.launch.py`
-  unchanged. Measure the second one first: if AMCL seeding still works for Sessions 3 and 4 with
-  that line present, one parameter buys back a whole config file and a launch file's worth of
-  duplication.
+  lives (§2.2). The params-file blocker is gone — `amcl.yaml` was deleted and both localization
+  and Nav2 now take `nav2_params.yaml`, which is precisely the shape `navigation.launch.py`
+  assumes. What is left to check is *ordering*: the seeder must start between localization and
+  Nav2, and whether `navigation.launch.py`'s `nav2_delay` leaves room for that has not been
+  tested. If it does, the courier can include it and the launch file moves.
 - **A queue.** "One job at a time" is a real limitation, honestly stated. A queue means
   deciding what cancel means for a job that has not started.
 - **Bounded job history.** `jobs_` grows for the life of the process so replayed ids can be

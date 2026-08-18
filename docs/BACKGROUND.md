@@ -167,7 +167,7 @@ exists, and you only need to find yourself in it. That is what a courier does, a
 ### 4.1 How it works, in four steps
 
 AMCL maintains a cloud of **particles**. Each particle is a guess: *"maybe the robot is here,
-facing this way."* Typically 500–2000 of them ([`amcl.yaml`](../ros2_ws/src/acadbot_courier/config/amcl.yaml)
+facing this way."* Typically 500–2000 of them ([`nav2_params.yaml`](../ros2_ws/src/acadbot_navigation/config/nav2_params.yaml)
 sets `min_particles: 500`, `max_particles: 2000`).
 
 1. **Predict.** The robot moves. Every particle is moved by the same odometry delta, plus
@@ -630,7 +630,7 @@ is the most useful thing in this repository to read twice.
 | TF | the timestamped tree of transforms between frames | `/tf`, `/tf_static` |
 | odometry | pose from integrating wheel motion; smooth, drifts | `/odom`, DiffDrive plugin |
 | occupancy grid | the map as free / occupied / unknown cells | `academy_map.pgm` |
-| AMCL | particle-filter localization on a known map | [`amcl.yaml`](../ros2_ws/src/acadbot_courier/config/amcl.yaml) |
+| AMCL | particle-filter localization on a known map | `amcl:` block in [`nav2_params.yaml`](../ros2_ws/src/acadbot_navigation/config/nav2_params.yaml) |
 | particle | one hypothesis about the robot's pose | 500–2000 of them |
 | costmap | the map plus obstacles plus inflation, as cost | `global_costmap`, `local_costmap` |
 | inflation radius | halo of cost around obstacles; 0.45 m here | `nav2_params.yaml` |

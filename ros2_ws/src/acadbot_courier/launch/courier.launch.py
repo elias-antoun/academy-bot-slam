@@ -20,22 +20,25 @@ Then, in another terminal:
 Two things about the ordering are not arbitrary.
 
 AMCL is seeded by publishing /initialpose on a timer, not by its
-set_initial_pose parameter -- see config/amcl.yaml for why that parameter
-cannot work under simulated time. Localization itself starts immediately, so
-AMCL's TF buffer has the whole startup to fill before the pose arrives.
+set_initial_pose parameter: AMCL applies that the instant it activates, before
+its first /clock message has arrived, so under use_sim_time the pose is
+stamped t=0 and no transform for it has ever existed. Localization itself
+starts immediately, so AMCL's TF buffer has the whole startup to fill before
+the pose arrives.
 
 Nav2 is delayed until after the seed. Its costmaps cannot configure without
 map->odom, and if that transition times out the lifecycle manager aborts the
 whole bringup and leaves every server INACTIVE, after which every goal comes
 back "rejected".
 
-This composes the stack itself rather than including acadbot_bringup's
-autonomy.launch.py. That file forwards no params_file, but the deeper reason
-is one level down: navigation.launch.py accepts a single params_file and hands
-the *same* one to both AMCL and the twelve Nav2 servers. AMCL here needs this
-package's parameter file, which holds an amcl block and nothing else, while
-the Nav2 servers must keep the course's untouched nav2_params.yaml -- so one
-file cannot serve both, and no pass-through argument would fix it.
+Localization and Nav2 are both given the course's nav2_params.yaml. There was
+once a courier-owned amcl.yaml here; it turned out to differ from the course's
+amcl block by a single parameter that was already AMCL's default, so it was
+deleted. See docs/REPORT.md 2.2.
+
+This still composes the stack rather than including acadbot_bringup's
+autonomy.launch.py, which forwards no params_file -- but the ordering below is
+now the only thing that would have to be reproduced to switch to including it.
 
 Arguments:
     headless:=true    Gazebo server only — no GUI, no GPU needed
@@ -63,7 +66,6 @@ def generate_launch_description():
     pkg_nav2_bringup = get_package_share_directory('nav2_bringup')
 
     courier_params = os.path.join(pkg_courier, 'config', 'courier.yaml')
-    amcl_params = os.path.join(pkg_courier, 'config', 'amcl.yaml')
     rviz_config = os.path.join(pkg_courier, 'rviz', 'courier.rviz')
     nav2_params = os.path.join(pkg_nav, 'config', 'nav2_params.yaml')
     default_map = os.path.join(pkg_nav, 'maps', 'academy_map.yaml')
@@ -92,7 +94,7 @@ def generate_launch_description():
         launch_arguments={
             'map': LaunchConfiguration('map'),
             'use_sim_time': 'true',
-            'params_file': amcl_params,
+            'params_file': nav2_params,
         }.items(),
     )
 
