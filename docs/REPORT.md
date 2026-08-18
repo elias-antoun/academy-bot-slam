@@ -195,6 +195,30 @@ package links against it, no tests depend on it, and every other package in the 
 plain executables. The sharing that does exist — `location_table.cpp` and `location_markers.cpp`
 compiling into both engines — needs no library to happen.
 
+**Why the location table is its own translation unit.** Three separate consumers include
+`location_table.hpp` — `courier_server.hpp`, `courier_bt_server.hpp` and
+`location_markers.hpp` — and `location_table.cpp` compiles into **both** courier executables.
+Inlined into the state machine, the behaviour-tree engine would need its own copy, and the two
+engines could then disagree about what a location *is*, which would quietly invalidate every
+comparison in §11.
+
+The order matters for honesty: `location_markers.hpp` needed the table *before* the behaviour
+tree existed, so there were already two consumers on day one. The second engine made a
+reasonable decision look prescient rather than causing it. And two defences are deliberately not
+offered — there are no unit tests, so no test seam depends on the boundary, and nothing outside
+the package links against it. At 80 lines of `.cpp` this would belong inside
+`courier_server.cpp` if there were one consumer. There are three.
+
+What the file earns its keep with is not storage but **validation**. `from_parameters()` is
+where requirement 8 is enforced — reading the parameter *overrides* rather than a declared list,
+so a location exists purely by being written in YAML and there is no second list of names to
+keep in step — and where three malformed floor plans are refused at **startup** rather than at
+first delivery: a value that is not a list of numbers, a list of the wrong length, and no
+locations at all. Skipping a short list instead of throwing would surface an hour later as
+*"unknown location"*, sending the reader to the service handler when the fault is a forgotten
+yaw. Parsing-and-validating configuration is a different job from running a delivery, and the
+file boundary says so.
+
 **Why there are headers at all, and only these.** A header exists where a *second* translation
 unit needs the declaration — not one per class as a reflex. `courier_server.hpp` exists because
 `main.cpp` constructs the class; `location_table.hpp` because four other files use the table.

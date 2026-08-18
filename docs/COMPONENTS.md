@@ -235,6 +235,36 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 # B. Value types and the location table
 
+**Why these are their own translation units at all**, rather than living inside
+`courier_server.cpp`: three separate consumers include `location_table.hpp`, and
+`location_table.cpp` compiles into **both** courier executables.
+
+```
+courier_server.hpp      ─┐
+courier_bt_server.hpp   ─┼─►  location_table.hpp
+location_markers.hpp    ─┘
+```
+
+Inlined into the state machine, the behaviour-tree engine would need its own copy — and then
+the two engines could disagree about what a location *is*, which would quietly invalidate every
+comparison the bonus exists to make. The markers would need a third copy.
+
+Worth being honest about the order in which that became true: `location_markers.hpp` needed the
+table **before** the behaviour tree existed, so there were already two consumers on day one. The
+second engine made a reasonable decision look prescient rather than causing it.
+
+The size argument cuts the other way and is worth stating: this is 80 lines of `.cpp` and 20 of
+header, small enough to inline if there were one consumer. Two defences that would be
+rationalisations are deliberately **not** offered — there are no unit tests in this project, so
+no test seam depends on it, and nothing outside the package links against it, which is exactly
+why there is no `courier_core` library either ([`REPORT.md` §2.2](REPORT.md)). The
+multi-consumer fact is the whole argument.
+
+What the file earns its keep with is not storage but **validation**: `from_parameters` is where
+requirement 8 is enforced and where three malformed floor plans are refused at startup (B3, B4).
+Parsing-and-validating configuration is a different job from running a delivery, and the file
+boundary says so.
+
 ## B1. `Pose2D`, `Leg`, `JobState`
 
 **What.** The vocabulary, in [`types.hpp`](../ros2_ws/src/acadbot_courier/include/acadbot_courier/types.hpp).
