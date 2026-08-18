@@ -16,7 +16,7 @@ built, what it measured, and what broke.
 |---|---|
 | [0. The result in one page](#0-the-result-in-one-page) | headline numbers |
 | [1. The task](#1-the-task) | the nine requirements, and what is out of scope |
-| [2. The design](#2-the-design) | service vs action, codebase structure and why, the state machine, the inherited Nav2 configuration |
+| [2. The design](#2-the-design) | service vs action, codebase structure and why, the state machine, the inherited Nav2 stack and where our code meets it |
 | [3. The procedure, chronologically](#3-the-procedure-chronologically) | eight phases, in the order they happened |
 | [4. Results](#4-results) | every measurement |
 | [5. Problems faced](#5-problems-faced) | six autopsies, including the one that cost a day |
@@ -464,6 +464,167 @@ Sessions 3 and 4, which are presumably tuned around its current behaviour. Raisi
 `BaseObstacle.scale` to rescue one courier route would silently alter the demo every other
 session depends on — the same shape of argument as the `transform_tolerance` question in §2.2.
 [`COMPONENTS.md` F3](COMPONENTS.md) has the full parameter listing.
+
+### 2.6 What we inherit, and where our code touches it
+
+Session 4's lecture walks the Nav2 stack server by server. Almost none of it is ours to build —
+but every piece of it is something this project *consumes* at a specific line. This section pairs
+each inherited concept with the code that meets it, because "we use Nav2" is not an answer and
+`courier_server.cpp:41` is.
+
+**The server team — one goal's journey.** Nav2 is not one node: BT navigator, planner server,
+controller server, behavior server, smoothers, lifecycle manager. This project attaches at
+exactly one point, an action client, and never talks to any other server directly.
+
+`src/courier_server.cpp:41`
+```cpp
+nav_client_ =
+  rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
+```
+
+**Lifecycle nodes — why the stack starts in order.** Every Nav2 server is a managed node, and
+the lifecycle manager aborts the *whole* bringup if one fails its transition. Costmaps refuse to
+configure without `map → odom`, so Nav2 must not start before localization has produced one.
+
+`launch/courier.launch.py:124-133`
+```python
+nav2 = IncludeLaunchDescription(
+    PythonLaunchDescriptionSource(
+        os.path.join(pkg_nav, 'launch', 'nav2_stack.launch.py')),
+    launch_arguments={
+        'use_sim_time': 'true',
+        'params_file': nav2_params,
+    }.items(),
+)
+delayed_nav2 = TimerAction(
+    period=LaunchConfiguration('nav2_delay'), actions=[nav2])
+```
+
+The default is 15 s (`launch/courier.launch.py:186`), raised from the course's 12 because the
+seeder must win first. The ordering is not cosmetic — §5.1 is the autopsy of getting it wrong.
+
+**Costmaps — the inflation dial.** `inflation_radius: 0.45` against `robot_radius: 0.20` decides
+which floor is usable. We never edit it; we *obey* it, and the rule is written where someone
+adding a room will read it.
+
+`config/courier.yaml:12-15`
+```yaml
+# Read your own coordinates off RViz's Publish Point rather than guessing, and
+# keep a location at least the costmap inflation_radius (0.45 m) clear of any
+# wall or obstacle -- closer than that and Nav2 spends its time fighting the
+# goal instead of driving to it.
+```
+
+That rule is also enforced visually rather than only in prose: the markers draw every location
+over the global costmap, so one sitting inside the inflation band is visible before it costs a
+delivery (D1). Two of four were found that way (§4.2).
+
+**The global planner — NavFn, Dijkstra.** Our contribution to planning is one `PoseStamped` in
+the right frame with the yaw the YAML asked for. Everything after that is NavFn's.
+
+`src/courier_server.cpp:549-562`
+```cpp
+geometry_msgs::msg::PoseStamped CourierServer::to_goal_pose(
+  const Pose2D & pose) const
+{
+  geometry_msgs::msg::PoseStamped out;
+  out.header.frame_id = goal_frame_;
+  out.header.stamp = now();
+  out.pose.position.x = pose.x;
+  out.pose.position.y = pose.y;
+
+  tf2::Quaternion q;
+  q.setRPY(0.0, 0.0, pose.yaw);
+  out.pose.orientation = tf2::toMsg(q);
+  return out;
+}
+```
+
+When the planner cannot plan, we learn about it only as an `ABORTED` result — `src/courier_server.cpp:364`.
+
+**The local controller — DWB.** We never see a velocity command. What reaches us is the
+by-product: `distance_remaining`, which we republish on our own clock so a stalled controller
+reads as a frozen number rather than as silence (C11).
+
+`src/courier_server.cpp:307-313`
+```cpp
+void CourierServer::on_nav_feedback(
+  NavGoalHandle::SharedPtr,
+  const std::shared_ptr<const NavigateToPose::Feedback> feedback)
+{
+  last_distance_ = feedback->distance_remaining;
+  last_recoveries_ = static_cast<uint16_t>(feedback->number_of_recoveries);
+}
+```
+
+DWB also silently defines what this project means by "delivered": `xy_goal_tolerance: 0.20`. Our
+success message claims nothing stronger.
+
+**`nav2_params.yaml` — one file runs the whole stack.** Our involvement is a path, passed
+through untouched.
+
+`launch/courier.launch.py:68`
+```python
+nav2_params = os.path.join(pkg_nav, 'config', 'nav2_params.yaml')
+```
+
+**The recovery ladder.** Nav2 escalates — re-plan, clear costmap, spin, back up, wait, abort —
+inside a single goal. This project invokes none of it and observes all of it, in one field:
+
+| file | line | role |
+|---|---|---|
+| `acadbot_courier_msgs/action/ExecuteDelivery.action` | 34 | `uint16 nav2_recoveries` |
+| `src/courier_server.cpp` | 312 | read from Nav2 feedback |
+| `src/courier_server.cpp` | 530 | republished on our timer |
+| `src/courier_server.cpp` | 364 | the ABORT, named honestly |
+| `src/bt_nodes.cpp` | 192 | the same read, BT engine |
+| `src/courier_bt_server.cpp` | 377 | the same republish |
+
+`src/courier_server.cpp:364`
+```cpp
+case rclcpp_action::ResultCode::ABORTED:
+  leg_failed("Nav2 aborted the goal (its recoveries were exhausted)");
+```
+
+That is the whole seam between Nav2's retry layer and ours: Nav2 exhausts six rounds inside one
+goal, then aborts, and only then does a courier *attempt* count as failed.
+
+**`behavior_server` configuration.** Nothing in this project references it —
+`git grep -l behavior_server -- ros2_ws/src/acadbot_courier` returns nothing. That is the
+intended answer rather than an omission: which recoveries exist, how fast a spin may be, how far
+a back-up goes, all belong to a file this project does not own. The only place the word appears
+in our tree is prose explaining that we leave it alone.
+
+**Debugging the full stack.** The lecture's checklist — no `map → odom`, TF extrapolation,
+goal rejected because a server never activated — is not theory here; five of its six symptoms
+were hit and are written up in §5. One of them is answered by code rather than by a procedure:
+the seeder does not trust that localization came up, it *checks*, by requiring the
+`map → odom` timestamp to advance.
+
+`src/initial_pose_seeder.cpp:99-113`
+```cpp
+bool transform_advancing()
+{
+  try {
+    const auto tf =
+      tf_buffer_->lookupTransform(map_frame_, odom_frame_, tf2::TimePointZero);
+    const rclcpp::Time stamp(tf.header.stamp);
+    const bool advancing = have_stamp_ && stamp > last_stamp_;
+    last_stamp_ = stamp;
+    have_stamp_ = true;
+    return advancing;
+  } catch (const tf2::TransformException &) {
+    have_stamp_ = false;
+    return false;
+  }
+}
+```
+
+Existence was not enough, and neither was age — a stale cached transform answers the first, and
+sim time frozen at zero defeats the second. Only *advancing* distinguishes a live localizer from
+a dead one (§5.1, E2).
+
+---
 
 ---
 
