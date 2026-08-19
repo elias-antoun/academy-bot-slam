@@ -339,9 +339,16 @@ assumed: `/amcl` and `/bt_navigator` both reach `active [3]`, the seeder still l
 
 This also removes the argument that made `courier.launch.py` compose the stack instead of
 including `navigation.launch.py` — the params-file conflict it was working around does not
-exist. What remains before that move is possible is the *ordering*: the seeder has to run
-between localization and Nav2, and whether `navigation.launch.py`'s `nav2_delay` leaves room for
-that is unchecked (§9).
+exist. The ordering, which was the last open question, **checks out**:
+`navigation.launch.py` starts localization immediately and holds Nav2 behind
+`TimerAction(nav2_delay)`, which is structurally identical to what this launch file does by
+hand, and it exposes `params_file`, `map`, `localization` and `nav2_delay` as arguments. The
+seeder runs concurrently with localization rather than between it and Nav2, so it stays a
+sibling action either way.
+
+**So there is no longer a technical reason for this file to live here.** What is left is a
+preference: `acadbot_courier` ships runnable on its own, and a deliverable that can be added or
+removed without leaving a dangling launch file in a course package is worth something (§9).
 
 Two lessons, and the second is the one worth keeping. First: **a duplicated config file that
 sets a parameter to its own default is worse than no file**, because it is a frozen copy — if
@@ -1161,11 +1168,14 @@ worth more than the two lines it deleted.
 - **Raise the tick rate, or measure what it should be.** 10 Hz costs 0.4 s per delivery (§11.3)
   and was chosen by intuition. The right number is a measurement, not a guess.
 - **Move `courier.launch.py` into `acadbot_bringup`**, where every other one-command launch
-  lives (§2.2). The params-file blocker is gone — `amcl.yaml` was deleted and both localization
-  and Nav2 now take `nav2_params.yaml`, which is precisely the shape `navigation.launch.py`
-  assumes. What is left to check is *ordering*: the seeder must start between localization and
-  Nav2, and whether `navigation.launch.py`'s `nav2_delay` leaves room for that has not been
-  tested. If it does, the courier can include it and the launch file moves.
+  lives (§2.2). Both blockers are now gone: `amcl.yaml` was deleted so one `params_file` serves
+  localization and Nav2 alike, and the ordering was checked — `navigation.launch.py` starts
+  localization immediately and delays Nav2 behind `nav2_delay`, the same shape this project
+  composes by hand. The move is `sim` + `IncludeLaunchDescription(navigation.launch.py)` +
+  seeder + courier + RViz, plus an `exec_depend` on `acadbot_courier`. It is not done because
+  the package currently ships runnable on its own, which is a preference rather than a
+  constraint — and because it touches the one-command bringup requirement 9 rests on, so it
+  needs a full re-verification run.
 - **A queue.** "One job at a time" is a real limitation, honestly stated. A queue means
   deciding what cancel means for a job that has not started.
 - **Bounded job history.** `jobs_` grows for the life of the process so replayed ids can be
