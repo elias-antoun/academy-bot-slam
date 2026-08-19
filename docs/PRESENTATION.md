@@ -18,8 +18,24 @@ Each slide gives:
 | `SAY` | speaker notes — roughly what comes out of your mouth, timed |
 | `TAG` | `KEEP` (10-min spine) · `ADD` (instructor asked for it) · `CUT-FIRST` (drop when short) |
 
-**The 10-minute spine is the 12 `KEEP` slides: 1–4, 6–9, 14, 15, 18, 20.** That is already tight
-— roughly 45 s each. Every `ADD` slide you keep costs ~40 s, so budget accordingly.
+### The 10-minute budget, honestly
+
+`KEEP` is **18** slides: 1–4, 6–9, 14, 15, 17–22, 26, 27. Do the arithmetic before you trust it:
+
+| | |
+|---|---|
+| four videos | ~2:00 of screen time |
+| two section dividers + cover + closing | ~0:30 |
+| twelve talking slides | **~7:30 → 37 s each** |
+
+That works, with no slack. The `SAY` notes are written to that length — several are ~45 s and
+will need trimming, not reading. If you overrun in rehearsal, drop **slide 7 (Dijkstra)** and
+**slide 8 (DWB)** first and fold their one-line takeaways into slide 6: *"the planner is Dijkstra
+over that cost, and the controller scores 400 candidate trajectories against it."* That buys 80 s
+and loses least.
+
+Every `ADD` slide you keep on top costs a further ~40 s — at 10 minutes you can afford roughly
+one, not six. They are drafted because you asked for them; they are not free.
 
 Footer on every content slide, matching the course deck: `inmind.ai academy · SLAM Track`,
 with `NN / total` top-right.
@@ -734,7 +750,8 @@ SUB     github.com/<repo> · branch final_project/Elias_Antoun
 
 - Course style: black `COVER`/`SECTION`, white `CONTENT`, blue→purple gradient accents,
   kicker in small caps top-left, `NN / total` top-right, footer `inmind.ai academy · SLAM Track`.
-- Slide count as drafted: **27**. The `KEEP` spine is **12**; that is the 10-minute deck.
+- Slide count as drafted: **27**. `KEEP` is **18** — see the budget note at the top; that is a
+  full 10 minutes with no slack, and slides 7 and 8 are the first to fold if you overrun.
 - `ADD` slides: 5, 10, 11, 12, 13, 16 — the Nav2 background and config material the instructor
   asked to see. Each costs ~40 s.
 - `CUT-FIRST`: 23, 24, 25.
