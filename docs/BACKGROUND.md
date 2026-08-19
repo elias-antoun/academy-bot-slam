@@ -218,8 +218,18 @@ the robot drives is the cloud tightening, made numeric.
 
 ## 5. Costmaps: how a map becomes a thing you can plan on
 
-You cannot plan directly on an occupancy grid, because a robot is not a point. A corridor
-80 cm wide is impassable for a 60 cm robot even though every cell in the middle is "free".
+You cannot plan directly on an occupancy grid, because a robot is not a point. AcadBot is
+`robot_radius: 0.20`, so **40 cm across**, and that breaks a grid planner in two different ways.
+
+**The gap is too narrow.** Every cell of a 30 cm gap reads *free*, so a planner treating the
+robot as a point routes straight through it — and a 40 cm robot cannot follow that path. Nothing
+in the grid records the difference.
+
+**Or the gap fits, but the path does not.** This is the subtler one and the reason inflation
+exists rather than a simple width test. An 80 cm corridor holds a 40 cm robot comfortably, 20 cm
+either side — but only near the middle. A planner minimising cost over free cells has no reason
+to prefer the middle: a route hugging the wall is the same cost as one down the centre, and
+often shorter. Every cell it chose was free, and the robot still scrapes.
 
 A **costmap** solves this by giving every cell a cost from 0 to 254, built in **layers**:
 
