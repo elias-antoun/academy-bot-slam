@@ -33,7 +33,7 @@
 
     # Retries are counted per leg, so a job may attempt each of pickup and
     # dropoff this many times over before it is called a failure.
-    max_retries: 2
+    max_retries: 4
     retry_delay: 3.0        # s, between attempts on the same leg
     feedback_period: 0.5    # s; the action promises feedback at least once a second
     leg_timeout: 120.0      # s, before an attempt is abandoned and retried
