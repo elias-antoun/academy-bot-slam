@@ -441,8 +441,10 @@ BLOCKS
                         block it and the result that would unblock it can never arrive
   CancelReason          a CANCELED result from Nav2 is ambiguous: client cancel, my leg
                         timeout, or Nav2 giving up. Recorded when issued, not guessed later.
-VISUAL  state diagram: NAVIGATING → RETRY_WAIT → NAVIGATING, both → CANCELING,
-        and the three terminal states SUCCEEDED / ABORTED / CANCELED
+VISUAL  docs/figures/courier_fsm.png — the per-leg phase loop (NAVIGATING /
+        RETRY_WAIT / CANCELING boxed as "one leg, runs for PICKUP then DROPOFF"),
+        the attempts-left decision, and the three terminal states. Regenerate:
+        dot -Tpng -Gdpi=200 docs/figures/courier_fsm.dot -o docs/figures/courier_fsm.png
 ```
 
 **SAY** (50 s) — "The one thing I'd point at is why nothing blocks. This node is an action server
