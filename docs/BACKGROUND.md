@@ -382,16 +382,58 @@ computes an **interpolated** potential — solving for a smooth surface rather t
 per-cell values — so the gradient descent that extracts the path can run at any angle. That is
 why Nav2's global plan looks like a smooth curve rather than a staircase.
 
-### 6.2 Recovery behaviours
+### 6.2 Recovery behaviours, and the two levels of retry
 
-When planning or control fails, Nav2's behaviour tree escalates through a recovery sequence:
-**clear the costmap** (drop stale phantom obstacles), **spin** (re-observe surroundings),
-**back up** (reverse out of a wedge), **wait** (let a moving obstacle pass). The
-`behavior_server` owns these.
+When planning or control fails, Nav2 does not give up — it tries a cheap "get unstuck" action and
+retries. Most navigation failures are stale information rather than genuine impossibility: a
+phantom obstacle from a bad LiDAR return, someone who will have walked past in three seconds, a
+robot nudged a few centimetres too close to a wall.
 
-Nav2's feedback reports `number_of_recoveries`, and this project surfaces it in its own
-feedback. It is the single most diagnostic number available: **zero recoveries means a clean
-drive; fifteen means the robot is fighting something.**
+**There are two independent retry layers in this project, and confusing them is the main way to
+misread the feedback.**
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  LEVEL 1 — MISSION recovery.  Ours: courier.xml / courier_server.cpp         │
+│  a leg fails  →  wait retry_delay (3 s)  →  retry the leg  (3 attempts)      │
+│                 →  still failing?  ABORT, naming failed_leg                  │
+└───────────────────────────────────┬──────────────────────────────────────────┘
+                                    │  one navigate_to_pose goal per attempt
+┌───────────────────────────────────▼──────────────────────────────────────────┐
+│  LEVEL 2 — MOTION recovery.  Nav2's: bt_navigator's own behaviour tree       │
+│  replan at 1 Hz; on failure a RoundRobin advances ONE action per failure:    │
+│                                                                              │
+│     1. clear local + global costmap    drop stale marks (a service, not a    │
+│                                        behavior_server plugin)               │
+│     2. Spin        spin_dist 1.57 rad  = 90°, NOT a full turn — re-observe   │
+│     3. Wait        5.0 s               let a moving obstacle remove itself   │
+│     4. BackUp      0.30 m @ 0.15 m/s   reverse out of a wedge                │
+│                                                                              │
+│  all inside  RecoveryNode number_of_retries="6"  — six rounds, ONE goal      │
+│  →  exhausted?  the goal comes back ABORTED, and Level 1 hears about it      │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Read the nesting carefully: Nav2 burns up to six recovery rounds **inside a single goal**, and
+only when those are exhausted does it abort — at which point *one* of our three attempts has
+failed. So a job that ends in failure may have seen twenty-odd recovery actions.
+
+**Who owns what.** `behavior_server` *hosts* the behaviours, each as its own action server
+(`/spin`, `/backup`, `/wait`, …). It does not decide anything. The **navigator's behaviour tree**
+chooses which fire and in what order — which is why the escalation is configuration rather than
+compiled-in code, and why swapping `default_nav_to_pose_bt_xml` changes the whole strategy.
+
+Two consequences worth knowing. `behavior_plugins` in `nav2_params.yaml` lists **five** plugins,
+but the default tree references only three of them plus the costmap clear — `drive_on_heading`
+and `assisted_teleop` are loaded and unreachable. And rung 1 is nearly useless against a *real*
+obstacle: clearing the costmap removes the mark, the LiDAR re-observes it immediately, and the
+round is spent. Clearing is for phantoms.
+
+**The number this project surfaces.** Nav2's feedback carries `number_of_recoveries` and the
+courier republishes it. It counts recovery *invocations* — including costmap clears, and across
+all three `RecoveryNode`s in that tree — so it is not a count of spins. It remains the single
+most diagnostic number available: **zero means a clean drive; fifteen means the robot is fighting
+the building.** Parameters and provenance are in [`REPORT.md` §2.5](REPORT.md).
 
 ---
 
