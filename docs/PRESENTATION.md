@@ -20,17 +20,17 @@ Each slide gives:
 
 ### The 10-minute budget, honestly
 
-`KEEP` is **18** slides: 1–4, 6–9, 14, 15, 17–22, 26, 27. Do the arithmetic before you trust it:
+`KEEP` is **18** slides: 1–4, 6–8, 10, 15, 16, 18–23, 27, 28. Do the arithmetic before you trust it:
 
 | | |
 |---|---|
 | four videos | ~2:00 of screen time |
 | two section dividers + cover + closing | ~0:30 |
-| twelve talking slides | **~7:30 → 37 s each** |
+| eleven talking slides | **~7:30 → 41 s each** |
 
 That works, with no slack. The `SAY` notes are written to that length — several are ~45 s and
 will need trimming, not reading. If you overrun in rehearsal, drop **slide 7 (Dijkstra)** and
-**slide 8 (DWB)** first and fold their one-line takeaways into slide 6: *"the planner is Dijkstra
+**slide 9 (the critics)** first and fold their one-line takeaways into slides 6 and 8: *"the planner is Dijkstra
 over that cost, and the controller scores 400 candidate trajectories against it."* That buys 80 s
 and loses least.
 
@@ -238,7 +238,66 @@ course's first commit."
 
 ---
 
-## Slide 9 · CONTENT · KEEP
+## Slide 9 · CONTENT · ADD
+
+```
+KICKER  CONTROL
+TITLE   The critics — seven numbers that are the robot's driving style
+LEAD    Every one of the 400 candidate trajectories gets a score. The critics are the terms
+        in that score; the weights are the personality.
+
+FORMULA (centred, large)
+        score(trajectory)  =  Σ  scale_i × critic_i(trajectory)
+        lowest total wins
+
+TABLE   the seven, as configured — all of them inherited, none of them mine
+  critic         scale   what it measures
+  PathDist        32.0   how far the trajectory ends from the global path
+  PathAlign       32.0   how well its heading lines up with the path
+  RotateToGoal    32.0   turning to the final yaw once inside position tolerance
+  GoalDist        24.0   how far it ends from the goal point
+  GoalAlign       24.0   how well its heading lines up with the goal
+  Oscillation        —   no scale set; penalises flip-flopping direction
+  BaseObstacle    0.02   the costmap cost of the cells it drives through
+
+CALLOUT (accent box, large)
+        32.0  ÷  0.02  =  1600 ×
+        Staying on the line matters 1600 times more than not being near a wall.
+```
+
+**SAY** (45 s) — "DWB doesn't have rules, it has weights. Each candidate trajectory is scored by
+seven critics and the cheapest one gets published. Look at the bottom two rows: following the
+planner's line is weighted 32, and how close you are to an obstacle is weighted 0.02. That's a
+factor of 1600. This robot will scrape a wall to stay on its line, and it does — that ratio is
+the direct cause of the one route I can't complete."
+
+**NOTE — the honest framing.** These are the *inherited* values. `git blame` puts every one of
+them in the course's first commit, `3b8d932`. I did not tune them, and the brief says I don't
+write a controller. If asked *"so fix it"*: raising `BaseObstacle.scale` makes it hug less and
+wander more, and `nav2_params.yaml` is shared with Sessions 3 and 4 — a fix for my one route
+changes their demos too.
+
+**BACKUP — the numbers that interact with the critics**, if a question goes there:
+
+| | |
+|---|---|
+| `vx_samples` × `vtheta_samples` | 20 × 20 = **400** candidates per cycle |
+| `sim_time` | **1.7 s** of forward simulation each |
+| `controller_frequency` | **20 Hz** — so 8,000 trajectories scored per second |
+| `max_vel_x` / `max_speed_xy` | **0.15 m/s** (locally lowered from the course's 0.26) |
+| `max_vel_theta` | 1.0 rad/s |
+| `xy_goal_tolerance` / `yaw_goal_tolerance` | 0.20 m / 0.25 rad — my definition of "delivered" |
+| `progress_checker` | must move 0.5 m every 10 s, or `FollowPath` fails |
+
+**One thing worth saying out loud if you show this slide:** a critic is *not* a constraint. A
+trajectory that clips a wall is not rejected — it is scored, badly, and then compared. With
+`BaseObstacle` at 0.02 the penalty for scraping is smaller than the reward for staying on the
+line, so it wins. The only hard stop in the whole chain is `collision_monitor`, which sits below
+the controller and owns `/cmd_vel`.
+
+---
+
+## Slide 10 · CONTENT · KEEP
 
 ```
 KICKER  RECOVERY
@@ -271,7 +330,7 @@ layers, easy to confuse."
 
 # PART 3 — WHAT I BUILT
 
-## Slide 10 · SECTION · ADD
+## Slide 11 · SECTION · ADD
 
 ```
 TYPE    SECTION (black)
@@ -281,7 +340,7 @@ LEAD    Two engines, one interface.
 
 ---
 
-## Slide 11 · CONTENT · ADD
+## Slide 12 · CONTENT · ADD
 
 ```
 KICKER  STRUCTURE
@@ -303,7 +362,7 @@ about how to run a mission but not about where the rooms are."
 
 ---
 
-## Slide 12 · CONTENT · ADD
+## Slide 13 · CONTENT · ADD
 
 ```
 KICKER  CONFIG
@@ -340,7 +399,7 @@ the fault, rather than showing up an hour later as 'unknown location'."
 
 ---
 
-## Slide 13 · CONTENT · ADD
+## Slide 14 · CONTENT · ADD
 
 ```
 KICKER  DEBUG
@@ -366,7 +425,7 @@ the localizer is alive."
 
 ---
 
-## Slide 14 · CONTENT · KEEP
+## Slide 15 · CONTENT · KEEP
 
 ```
 KICKER  ORCHESTRATION
@@ -394,7 +453,7 @@ serialises everything, not one member needs a mutex. That's a design constraint,
 
 ---
 
-## Slide 15 · CONTENT · KEEP
+## Slide 16 · CONTENT · KEEP
 
 ```
 KICKER  ORCHESTRATION
@@ -430,7 +489,7 @@ as the last slide wearing a different hat."
 
 ---
 
-## Slide 16 · CONTENT · ADD
+## Slide 17 · CONTENT · ADD
 
 ```
 KICKER  ORCHESTRATION
@@ -465,7 +524,7 @@ implementation and the tree is a demonstration of a technique. One scale up, the
 >
 > **Videos 1–3 are scenarios already verified.** Video 4 has **never been run** — see its slide.
 
-## Slide 17 · SECTION · KEEP
+## Slide 18 · SECTION · KEEP
 
 ```
 TYPE    SECTION (black)
@@ -475,7 +534,7 @@ LEAD    One succeeds, one is refused, one is cancelled, one goes wrong.
 
 ---
 
-## Slide 18 · VIDEO · KEEP
+## Slide 19 · VIDEO · KEEP
 
 ```
 KICKER  DEMO 1 / 4
@@ -501,7 +560,7 @@ the one I show."
 
 ---
 
-## Slide 19 · VIDEO · KEEP
+## Slide 20 · VIDEO · KEEP
 
 ```
 KICKER  DEMO 2 / 4
@@ -525,7 +584,7 @@ checked, not waited on, so the reply stays instant."
 
 ---
 
-## Slide 20 · VIDEO · KEEP
+## Slide 21 · VIDEO · KEEP
 
 ```
 KICKER  DEMO 3 / 4
@@ -553,7 +612,7 @@ mission stops and the robot drives on."
 
 ---
 
-## Slide 21 · VIDEO · KEEP
+## Slide 22 · VIDEO · KEEP
 
 ```
 KICKER  DEMO 4 / 4
@@ -586,7 +645,7 @@ attempts fail, I say so and name the leg. The only unacceptable outcome is claim
 
 # PART 5 — RESULTS AND HONESTY
 
-## Slide 22 · CONTENT · KEEP
+## Slide 23 · CONTENT · KEEP
 
 ```
 KICKER  RESULTS
@@ -612,7 +671,7 @@ retrying rather than reporting a failure the first time Nav2 gives up."
 
 ---
 
-## Slide 23 · CONTENT · CUT-FIRST
+## Slide 24 · CONTENT · CUT-FIRST
 
 ```
 KICKER  DEBUG
@@ -642,7 +701,7 @@ case."
 
 ---
 
-## Slide 24 · CONTENT · CUT-FIRST
+## Slide 25 · CONTENT · CUT-FIRST
 
 ```
 KICKER  DEBUG
@@ -669,7 +728,7 @@ side by side and asking where each piece of state went."
 
 ---
 
-## Slide 25 · CONTENT · CUT-FIRST
+## Slide 26 · CONTENT · CUT-FIRST
 
 ```
 KICKER  ENGINEERING
@@ -693,7 +752,7 @@ under test — worth writing down."
 
 ---
 
-## Slide 26 · CONTENT · KEEP
+## Slide 27 · CONTENT · KEEP
 
 ```
 KICKER  CLOSING
@@ -714,7 +773,7 @@ BLOCKS
 
 ---
 
-## Slide 27 · SECTION · KEEP
+## Slide 28 · SECTION · KEEP
 
 ```
 TYPE    SECTION (black)
@@ -750,11 +809,11 @@ SUB     github.com/<repo> · branch final_project/Elias_Antoun
 
 - Course style: black `COVER`/`SECTION`, white `CONTENT`, blue→purple gradient accents,
   kicker in small caps top-left, `NN / total` top-right, footer `inmind.ai academy · SLAM Track`.
-- Slide count as drafted: **27**. `KEEP` is **18** — see the budget note at the top; that is a
-  full 10 minutes with no slack, and slides 7 and 8 are the first to fold if you overrun.
-- `ADD` slides: 5, 10, 11, 12, 13, 16 — the Nav2 background and config material the instructor
+- Slide count as drafted: **28**. `KEEP` is **18** — see the budget note at the top; that is a
+  full 10 minutes with no slack, and slides 7 and 9 are the first to fold if you overrun.
+- `ADD` slides: 5, 9, 11, 12, 13, 14, 17 — the Nav2 background and config material the instructor
   asked to see. Each costs ~40 s.
-- `CUT-FIRST`: 23, 24, 25.
+- `CUT-FIRST`: 24, 25, 26.
 - Diagrams needed: the frames chain (slide 4), the two-corridor costmap panel (6), the
   Dijkstra-vs-A* flood (7), the DWB trajectory fan (8), the nested retry layers (9), the FSM
   state diagram (14). Mirror the instructor's Session 4 visual language where it exists.
