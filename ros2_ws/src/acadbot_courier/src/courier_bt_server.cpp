@@ -1,7 +1,9 @@
 #include "acadbot_courier/courier_bt_server.hpp"
 
 #include <chrono>
+#include <exception>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -400,3 +402,22 @@ Job & CourierBtServer::current_job()
 }
 
 }  // namespace acadbot_courier
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+
+  try {
+    // Single-threaded, for the same reason as the state machine: the tree is
+    // ticked from a timer and every Nav2 callback returns promptly, so nothing
+    // needs a mutex. tickOnce, never tickWhileRunning.
+    rclcpp::spin(std::make_shared<acadbot_courier::CourierBtServer>());
+  } catch (const std::exception & e) {
+    RCLCPP_FATAL(rclcpp::get_logger("courier_bt_server"), "%s", e.what());
+    rclcpp::shutdown();
+    return 1;
+  }
+
+  rclcpp::shutdown();
+  return 0;
+}

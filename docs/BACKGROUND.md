@@ -652,7 +652,7 @@ is the most useful thing in this repository to read twice.
 | lifecycle node | node with configure → activate states | `map_server`, `amcl`, all Nav2 servers |
 | topic / service / action | broadcast / function call / long cancellable job | §7 |
 | goal, feedback, result | the three parts of an action | [`ExecuteDelivery.action`](../ros2_ws/src/acadbot_courier_msgs/action/ExecuteDelivery.action) |
-| executor | the loop that runs callbacks | `rclcpp::spin` in [`main.cpp`](../ros2_ws/src/acadbot_courier/src/main.cpp) |
+| executor | the loop that runs callbacks | `rclcpp::spin` in [`courier_server.cpp`](../ros2_ws/src/acadbot_courier/src/courier_server.cpp) |
 | behaviour tree | mission logic as a ticked tree of nodes | §9.2, [`courier.xml`](../ros2_ws/src/acadbot_courier/behavior_trees/courier.xml) |
 | tick | one traversal of the tree, root to active leaf | 10 Hz timer in `courier_bt_server` |
 | `RUNNING` | "not finished, ask me again" — the status that makes trees work | `GoToLocation::onRunning` |

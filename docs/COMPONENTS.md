@@ -35,7 +35,7 @@ Start with [the layout](#the-layout) if you want the map before the territory.
 
 # The layout
 
-Two packages, three executables, thirty tracked files. Why it is split this way — rather than
+Two packages, three executables, twenty-eight tracked files. Why it is split this way — rather than
 a node dropped into `acadbot_control`, or a Python file in `acadbot_bringup` — is argued in
 [`REPORT.md` §2.2](REPORT.md). This section is the map.
 
@@ -70,8 +70,8 @@ tell you:
 
 | executable | built from | what it is |
 |---|---|---|
-| `courier_server` | `main.cpp` · `courier_server.cpp` · `location_table.cpp` · `location_markers.cpp` | the courier, state-machine engine |
-| `courier_bt_server` | `bt_main.cpp` · `courier_bt_server.cpp` · `bt_nodes.cpp` · `location_table.cpp` · `location_markers.cpp` | the courier, behaviour-tree engine |
+| `courier_server` | `courier_server.cpp` · `location_table.cpp` · `location_markers.cpp` | the courier, state-machine engine |
+| `courier_bt_server` | `courier_bt_server.cpp` · `bt_nodes.cpp` · `location_table.cpp` · `location_markers.cpp` | the courier, behaviour-tree engine |
 | `initial_pose_seeder` | `initial_pose_seeder.cpp` | tells AMCL where the robot starts |
 
 `location_table.cpp` and `location_markers.cpp` compile into **both** courier binaries. That is
@@ -101,8 +101,7 @@ how to run a mission, but they cannot disagree about what a location *is*.
 | file | ln | what it does | entry |
 |---|---|---|---|
 | `include/…/courier_server.hpp` | 168 | the node: `Phase`, `CancelReason`, and every member the FSM tracks | [C](#c-the-courier-node) |
-| `src/courier_server.cpp` | 583 | booking, the action server, the Nav2 client, retry, timeout, the three endings | [C1](#c1-construction)–[C12](#c12-to_goal_pose-and-one-naming-trap) |
-| `src/main.cpp` | 28 | single-threaded spin, with construction wrapped so a bad config dies loudly | [C1](#c1-construction) |
+| `src/courier_server.cpp` | 607 | booking, the action server, the Nav2 client, retry, timeout, the three endings, and `main()` | [C1](#c1-construction)–[C12](#c12-to_goal_pose-and-one-naming-trap) |
 
 **Engine 2 — the behaviour tree (bonus)**
 
@@ -110,8 +109,7 @@ how to run a mission, but they cannot disagree about what a location *is*.
 |---|---|---|---|
 | `behavior_trees/courier.xml` | 74 | the entire mission: two legs, retry, timeout, inter-attempt delay | [H1](#h1-courierxml--the-mission-as-data) |
 | `include/…/bt_nodes.hpp` · `src/bt_nodes.cpp` | 345 | `GoToLocation`, the only custom leaf; `LegStatus`; `NavContext` | [H2](#h2-gotolocation--the-only-custom-leaf), [H3](#h3-legstatus--feedback-that-survives-the-gap) |
-| `include/…/courier_bt_server.hpp` · `src/courier_bt_server.cpp` | 505 | the same plumbing as engine 1, with the leg loop replaced by a ticked tree | [H4](#h4-courier_bt_server--the-plumbing-and-the-tick) |
-| `src/bt_main.cpp` | 22 | as `main.cpp`, different class | — |
+| `include/…/courier_bt_server.hpp` · `src/courier_bt_server.cpp` | 526 | the same plumbing as engine 1, with the leg loop replaced by a ticked tree, plus `main()` | [H4](#h4-courier_bt_server--the-plumbing-and-the-tick) |
 
 **Making it run**
 
@@ -139,9 +137,10 @@ mean a client wanting to call `/request_delivery` had to depend on a package ful
 files for four unrelated sessions.
 
 **A header exists where a second translation unit needs the declaration** — not one per class
-as a reflex. `courier_server.hpp` exists because `main.cpp` constructs the class;
-`location_table.hpp` because four other files use the table. There is no `bt_main.hpp`, because
-nothing includes `bt_main.cpp`.
+as a reflex. `location_table.hpp` exists because four other files use the table;
+`courier_server.hpp` because the class is declared apart from the 600-line file that implements
+it. Each executable's `main()` sits at the bottom of its own implementation file — the
+convention the course's `patrol_commander.cpp` and `square_driver.cpp` already use.
 
 ---
 
@@ -394,7 +393,7 @@ The alternative — `if (coords.size() == 3) { use it }` — silently drops the 
 The delivery then comes back *"unknown location: reception"* and you go looking at the service
 handler, when the real fault is a missing third number.
 
-These messages only work because [`main.cpp`](../ros2_ws/src/acadbot_courier/src/main.cpp)
+These messages only work because [`main()`](../ros2_ws/src/acadbot_courier/src/courier_server.cpp)
 catches them:
 
 ```cpp

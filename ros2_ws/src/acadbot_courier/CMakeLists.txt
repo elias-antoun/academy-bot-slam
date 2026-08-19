@@ -24,7 +24,6 @@ find_package(behaviortree_cpp REQUIRED)
 
 # ---- courier_server (RequestDelivery service + ExecuteDelivery action + Nav2 client) ----
 add_executable(courier_server
-  src/main.cpp
   src/courier_server.cpp
   src/location_table.cpp
   src/location_markers.cpp)
@@ -35,7 +34,6 @@ ament_target_dependencies(courier_server
 
 # ---- courier_bt_server (Behavior Tree bonus implementation) ----
 add_executable(courier_bt_server
-  src/bt_main.cpp
   src/courier_bt_server.cpp
   src/bt_nodes.cpp
   src/location_table.cpp

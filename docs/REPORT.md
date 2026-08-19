@@ -135,7 +135,7 @@ the action runs would let an edit to `courier.yaml` move the target of a job alr
 
 ### 2.2 Codebase structure, and why it is this and not something smaller
 
-Two new packages, three executables, thirty tracked files. The existing tree already had six
+Two new packages, three executables, twenty-eight tracked files. The existing tree already had six
 packages and a launch-only `acadbot_bringup`, so "add a file to something that exists" was a live
 option and was rejected for reasons worth writing down.
 
@@ -164,13 +164,12 @@ ros2_ws/src/
     │   ├── location_markers.cpp        draws the table, current target highlighted
     │   │                               — engine 1: the state machine —
     │   ├── courier_server.cpp          booking, action server, Nav2 client, retry, timeout,
-    │   │                               the three endings                            (583 lines)
-    │   ├── main.cpp                    single-threaded spin; a bad config dies loudly
+    │   │                               the three endings, and main()                (607 lines)
     │   │                               — engine 2: the behaviour tree (bonus) —
     │   ├── bt_nodes.cpp                GoToLocation: onStart sends, onRunning polls,
     │   │                               onHalted cancels. Nothing waits.
-    │   ├── courier_bt_server.cpp       the same plumbing, leg loop replaced by a 10 Hz tick
-    │   ├── bt_main.cpp                 as main.cpp, different class
+    │   ├── courier_bt_server.cpp       the same plumbing, leg loop replaced by a 10 Hz tick,
+    │   │                               and its own main()
     │   │                               — making the demo need no mouse —
     │   └── initial_pose_seeder.cpp     seeds AMCL and *verifies* it took, by requiring the
     │                                   map→odom stamp to advance
@@ -275,8 +274,10 @@ file boundary says so.
 
 **Why there are headers at all, and only these.** A header exists where a *second* translation
 unit needs the declaration — not one per class as a reflex. `courier_server.hpp` exists because
-`main.cpp` constructs the class; `location_table.hpp` because four other files use the table.
-There is no `bt_main.hpp`, because nothing includes `bt_main.cpp`. The alternative that was
+`courier_server.cpp` and `courier_bt_server.cpp` both construct their class from a `main()` at
+the bottom of the same file — the convention the course's own `patrol_commander.cpp` and
+`square_driver.cpp` use, and which `initial_pose_seeder.cpp` here already followed.
+`location_table.hpp` exists because four other files use the table. The alternative that was
 considered and rejected — one big `.cpp` per node with no headers — reads fine at 200 lines and
 badly at 583.
 
@@ -736,7 +737,7 @@ poses can disagree in one direction silently.
 
 `courier_server.hpp` first, agreeing the state machine shape before any implementation:
 the two axes, the event list, the transition table, the two cancel races. Then
-`courier_server.cpp` and `main.cpp`. First successful build of the package.
+`courier_server.cpp`, with `main()` then in its own file. First successful build of the package.
 
 ### Phase 5 — Testing against a stand-in
 
