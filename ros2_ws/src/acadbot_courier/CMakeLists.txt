@@ -22,7 +22,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(behaviortree_cpp REQUIRED)
 
-# ---- courier_server (RequestDelivery service + ExecuteDelivery action + Nav2 client) ----
+# ---- courier_server: the state-machine engine ----
 add_executable(courier_server
   src/courier_server.cpp
   src/location_table.cpp
@@ -32,7 +32,7 @@ ament_target_dependencies(courier_server
   rclcpp rclcpp_action acadbot_courier_msgs nav2_msgs
   geometry_msgs tf2 tf2_geometry_msgs visualization_msgs)
 
-# ---- courier_bt_server (Behavior Tree bonus implementation) ----
+# ---- courier_bt_server: the behaviour-tree engine (bonus) ----
 add_executable(courier_bt_server
   src/courier_bt_server.cpp
   src/bt_nodes.cpp
@@ -44,7 +44,7 @@ ament_target_dependencies(courier_bt_server
   geometry_msgs tf2 tf2_geometry_msgs visualization_msgs
   ament_index_cpp behaviortree_cpp)
 
-# ---- initial_pose_seeder (tells AMCL where the robot starts) ----
+# ---- initial_pose_seeder: tells AMCL where the robot starts ----
 add_executable(initial_pose_seeder src/initial_pose_seeder.cpp)
 ament_target_dependencies(initial_pose_seeder
   rclcpp geometry_msgs sensor_msgs tf2 tf2_geometry_msgs tf2_ros)

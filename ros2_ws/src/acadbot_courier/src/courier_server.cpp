@@ -25,9 +25,7 @@ namespace
 constexpr double kMarkerPeriod = 1.0;   // s
 }  // namespace
 
-// ===========================================================================
-// Construction
-// ===========================================================================
+// ---- Construction ----------------------------------------------------------
 CourierServer::CourierServer()
 : Node("courier_server")
 {
@@ -58,9 +56,7 @@ CourierServer::CourierServer()
   marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
     "~/locations", marker_qos);
 
-  // Republished on a timer as well as being latched: RViz's MarkerArray
-  // display defaults to volatile, so an RViz started after this node would
-  // otherwise see nothing until the next change.
+  // Timed as well as latched, because RViz's MarkerArray display is volatile.
   marker_timer_ = create_wall_timer(
     std::chrono::duration<double>(kMarkerPeriod),
     std::bind(&CourierServer::publish_markers, this));
@@ -72,11 +68,7 @@ CourierServer::CourierServer()
     max_retries_, leg_timeout_);
 }
 
-// ===========================================================================
-// Booking -- the service. Validates, mints an id, and returns. No driving
-// happens here, which is the entire reason this is a service and not an
-// action: the reply is immediate.
-// ===========================================================================
+// ---- Booking: validate, mint an id, reply immediately ----------------------
 void CourierServer::handle_request(
   const std::shared_ptr<RequestDelivery::Request> request,
   std::shared_ptr<RequestDelivery::Response> response)
@@ -89,8 +81,7 @@ void CourierServer::handle_request(
         request->pickup.c_str(), request->dropoff.c_str(), why.c_str());
     };
 
-  // A running job owns the robot; a second booking would put two deliveries
-  // on one base.
+  // A running job owns the robot.
   if (!active_job_id_.empty()) {
     reject("a delivery is already running (" + active_job_id_ + ")");
     return;
@@ -116,8 +107,7 @@ void CourierServer::handle_request(
     return;
   }
 
-  // "Cannot be served right now" rather than accepting a job that could never
-  // run. Checked rather than waited on, so the reply stays immediate.
+  // Checked rather than waited on, so the reply stays immediate.
   if (!nav_client_->action_server_is_ready()) {
     reject("navigation is not available: Nav2's navigate_to_pose action "
       "server is not up");
@@ -144,9 +134,7 @@ void CourierServer::handle_request(
     job.id.c_str(), job.pickup_name.c_str(), job.dropoff_name.c_str());
 }
 
-// ===========================================================================
-// Execution -- the action server
-// ===========================================================================
+// ---- Execution: the action server ------------------------------------------
 rclcpp_action::GoalResponse CourierServer::handle_goal(
   const rclcpp_action::GoalUUID &,
   std::shared_ptr<const ExecuteDelivery::Goal> goal)
@@ -164,8 +152,7 @@ rclcpp_action::GoalResponse CourierServer::handle_goal(
     return rclcpp_action::GoalResponse::REJECT;
   }
 
-  // Finished jobs are kept precisely so this check can be made: running one
-  // twice would deliver twice.
+  // Finished jobs are kept so a replay is refused, not delivered twice.
   if (it->second.state != JobState::BOOKED) {
     RCLCPP_WARN(get_logger(), "goal for %s rejected: it is already %s",
       goal->job_id.c_str(), to_string(it->second.state));
@@ -192,10 +179,8 @@ rclcpp_action::CancelResponse CourierServer::handle_cancel(
   cancel_reason_ = CancelReason::CLIENT_REQUEST;
 
   if (phase_ == Phase::RETRY_WAIT) {
-    // Nothing is driving and no Nav2 goal is in flight, so no result is
-    // coming to finish on. The goal does not enter the CANCELING state until
-    // this callback returns, though, so canceled() cannot be called from
-    // here -- finish on the next spin instead.
+    // Nothing is driving, so no result is coming to finish on -- and the goal
+    // only enters CANCELING once this returns, so finish on the next spin.
     if (retry_timer_) {
       retry_timer_->cancel();
     }
@@ -210,8 +195,7 @@ rclcpp_action::CancelResponse CourierServer::handle_cancel(
   if (nav_handle_) {
     nav_client_->async_cancel_goal(nav_handle_);
   }
-  // If nav_handle_ is null, Nav2 has not acknowledged the goal yet.
-  // on_nav_goal_response cancels it the moment the handle arrives.
+  // With no handle yet, on_nav_goal_response cancels it on arrival.
   return rclcpp_action::CancelResponse::ACCEPT;
 }
 
@@ -228,8 +212,7 @@ void CourierServer::handle_accepted(
   attempt_ = 0;
   attempts_total_ = 0;
 
-  // Our own clock, not Nav2's: a stalled Nav2 must show up as a frozen
-  // distance rather than as silence.
+  // Our own clock, so a stalled Nav2 shows a frozen distance, not silence.
   feedback_timer_ = create_wall_timer(
     std::chrono::duration<double>(feedback_period_),
     std::bind(&CourierServer::publish_feedback, this));
@@ -242,9 +225,7 @@ void CourierServer::handle_accepted(
   send_leg_goal();
 }
 
-// ===========================================================================
-// The state machine
-// ===========================================================================
+// ---- The state machine -----------------------------------------------------
 void CourierServer::send_leg_goal()
 {
   Job & job = current_job();
@@ -291,16 +272,14 @@ void CourierServer::on_nav_goal_response(const NavGoalHandle::SharedPtr & handle
   }
 
   if (!handle) {
-    // patrol_commander skips a rejected waypoint. A courier cannot: a leg
-    // that was never driven is a leg that failed.
+    // A leg that was never driven is a leg that failed.
     leg_failed("Nav2 rejected the goal");
     return;
   }
 
   nav_handle_ = handle;
 
-  // The cancel landed before Nav2 acknowledged the goal, so there was nothing
-  // to cancel at the time. There is now.
+  // The cancel landed before the handle did; there is something to cancel now.
   if (cancel_reason_ != CancelReason::NONE) {
     nav_client_->async_cancel_goal(nav_handle_);
   }
@@ -328,8 +307,7 @@ void CourierServer::on_nav_result(const NavGoalHandle::WrappedResult & result)
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
       if (cancel_reason_ == CancelReason::CLIENT_REQUEST) {
-        // Arrived just as the cancel landed. The requester asked us to stop,
-        // so this is a cancelled delivery, not a successful one.
+        // Arrived as the cancel landed, so this is cancelled, not successful.
         finish_canceled();
         return;
       }
@@ -345,8 +323,7 @@ void CourierServer::on_nav_result(const NavGoalHandle::WrappedResult & result)
       return;
 
     case rclcpp_action::ResultCode::CANCELED:
-      // Ambiguous on its own, which is why the reason was recorded when the
-      // cancel was issued.
+      // Ambiguous on its own, hence the reason recorded at cancel time.
       switch (cancel_reason_) {
         case CancelReason::CLIENT_REQUEST:
           finish_canceled();
@@ -431,10 +408,7 @@ void CourierServer::leg_failed(const std::string & why)
     std::to_string(attempt_) + " attempts: " + why);
 }
 
-// ===========================================================================
-// Endings. Exactly one of these runs per accepted goal, and success is
-// reachable only from the dropoff leg returning SUCCEEDED.
-// ===========================================================================
+// ---- Endings: exactly one runs per accepted goal ---------------------------
 void CourierServer::finish_succeeded()
 {
   Job & job = current_job();
@@ -466,8 +440,7 @@ void CourierServer::finish_failed(const std::string & message)
   job.state = JobState::FAILED;
   RCLCPP_ERROR(get_logger(), "%s: %s", job.id.c_str(), message.c_str());
 
-  // abort(), never succeed(). A delivery reported as done is a delivery that
-  // happened.
+  // abort(), never succeed().
   execute_handle_->abort(result);
   reset_to_idle();
 }
@@ -512,9 +485,7 @@ void CourierServer::reset_to_idle()
   publish_markers();     // drop the highlight
 }
 
-// ===========================================================================
-// Output
-// ===========================================================================
+// ---- Output ----------------------------------------------------------------
 void CourierServer::publish_feedback()
 {
   if (active_job_id_.empty() || !execute_handle_) {
@@ -545,9 +516,7 @@ void CourierServer::publish_markers()
     make_location_markers(locations_, goal_frame_, now(), active));
 }
 
-// ===========================================================================
-// Helpers
-// ===========================================================================
+// ---- Helpers ---------------------------------------------------------------
 geometry_msgs::msg::PoseStamped CourierServer::to_goal_pose(
   const Pose2D & pose) const
 {
@@ -589,14 +558,11 @@ int main(int argc, char ** argv)
   rclcpp::init(argc, argv);
 
   try {
-    // Single-threaded on purpose. Every callback in CourierServer returns
-    // promptly and none of them blocks, so serialising them is enough to make
-    // the node's state safe without a single mutex.
+    // Single-threaded on purpose: nothing blocks, so serialising callbacks
+    // is enough to make the state safe without a mutex.
     rclcpp::spin(std::make_shared<acadbot_courier::CourierServer>());
   } catch (const std::exception & e) {
-    // The location table refuses to start on a bad floor plan, and its
-    // messages are written to be read. Caught here so a configuration mistake
-    // prints as one fatal line rather than as an abort trace.
+    // Caught so a bad floor plan prints one fatal line, not an abort trace.
     RCLCPP_FATAL(rclcpp::get_logger("courier_server"), "%s", e.what());
     rclcpp::shutdown();
     return 1;

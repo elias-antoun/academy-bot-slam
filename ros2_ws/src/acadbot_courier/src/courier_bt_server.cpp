@@ -64,14 +64,14 @@ CourierBtServer::CourierBtServer()
     std::chrono::duration<double>(kMarkerPeriod),
     std::bind(&CourierBtServer::publish_markers, this));
 
-  // Initialize shared feedback status and context for BT nodes
+  // Shared with every GoToLocation the tree builds.
   leg_status_ = std::make_shared<LegStatus>();
   nav_context_.node = this;
   nav_context_.nav_client = nav_client_;
   nav_context_.status = leg_status_;
   nav_context_.goal_frame = goal_frame_;
 
-  // Register custom BehaviorTree.CPP leaf nodes
+  // Teach the factory about GoToLocation before any tree is built.
   register_courier_nodes(factory_, nav_context_);
 
   RCLCPP_INFO(
@@ -193,7 +193,7 @@ rclcpp_action::CancelResponse CourierBtServer::handle_cancel(
     tree_running_ = false;
   }
 
-  // Action status transition must happen outside cancel callback on next spin
+  // The goal only enters CANCELING once this returns, so finish on a timer.
   if (cancel_timer_) {
     cancel_timer_->cancel();
   }
@@ -217,7 +217,7 @@ void CourierBtServer::handle_accepted(
 
   Job & job = current_job();
 
-  // Reset feedback structure
+  // Reset the feedback state for a fresh job.
   leg_status_->leg = Leg::PICKUP;
   leg_status_->target_location = job.pickup_name;
   leg_status_->state = "NAVIGATING";
@@ -226,7 +226,7 @@ void CourierBtServer::handle_accepted(
   leg_status_->attempt = 0;
   leg_status_->attempts_total = 0;
 
-  // Build blackboard
+  // The blackboard the tree reads its targets and limits from.
   auto blackboard = BT::Blackboard::create();
   blackboard->set("pickup_pose", job.pickup);
   blackboard->set("dropoff_pose", job.dropoff);
@@ -247,7 +247,7 @@ void CourierBtServer::handle_accepted(
 
   tree_running_ = true;
 
-  // Start periodic feedback timer (2 Hz) and BT tick timer (10 Hz)
+  // Feedback at 2 Hz, tree ticks at 10 Hz.
   feedback_timer_ = create_wall_timer(
     std::chrono::duration<double>(feedback_period_),
     std::bind(&CourierBtServer::publish_feedback, this));
@@ -408,9 +408,8 @@ int main(int argc, char ** argv)
   rclcpp::init(argc, argv);
 
   try {
-    // Single-threaded, for the same reason as the state machine: the tree is
-    // ticked from a timer and every Nav2 callback returns promptly, so nothing
-    // needs a mutex. tickOnce, never tickWhileRunning.
+    // Single-threaded for the same reason as the state machine: nothing
+    // blocks, so no state needs a mutex.
     rclcpp::spin(std::make_shared<acadbot_courier::CourierBtServer>());
   } catch (const std::exception & e) {
     RCLCPP_FATAL(rclcpp::get_logger("courier_bt_server"), "%s", e.what());

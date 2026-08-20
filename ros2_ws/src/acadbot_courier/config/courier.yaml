@@ -1,70 +1,26 @@
-# courier.yaml
-# Everything the courier is allowed to know about the building and about its
-# own limits. Nothing here is compiled into the node.
-#
-# COORDINATES ARE IN THE MAP FRAME, NOT THE GAZEBO WORLD FRAME.
-# The map origin is wherever the robot stood when Session 2 mapping started,
-# which is its spawn point at Gazebo (-3, -2). So map = gazebo + (3, 2), and
-# the room spans roughly map x -1..7, y -1..5 with the divider at x = 3.5
-# running from y = 1.0 up to the north wall. The only way between the two
-# halves is the corridor south of it.
-#
-# Read your own coordinates off RViz's Publish Point rather than guessing, and
-# keep a location at least the costmap inflation_radius (0.45 m) clear of any
-# wall or obstacle -- closer than that and Nav2 spends its time fighting the
-# goal instead of driving to it.
+# Everything the courier knows about the building and its own limits.
 
-# /** rather than a node name, so that courier_server and courier_bt_server
-# read one block instead of a copy each. They are the same mission with the
-# same building and the same limits -- two copies could drift, and a location
-# edited in one and not the other would quietly give the two implementations
-# different destinations, which is exactly the comparison this file exists to
-# make fair. Only one of the two ever runs, and the launch file hands this
-# file to that one node, so the wildcard cannot leak into anything else.
-#
-# YAML anchors would be the other way to do this. They are not used because
-# ROS 2's parameter parser does not handle aliases reliably, and the failure
-# looks like a configuration bug rather than a parsing one.
+# Coordinates are in the MAP frame, not Gazebo's: map = gazebo + (3, 2).
+
+# Keyed /** so courier_server and courier_bt_server read one block and cannot
+# drift apart.
 /**:
   ros__parameters:
     use_sim_time: true
 
     goal_frame: "map"
 
-    # Retries are counted per leg, so a job may attempt each of pickup and
-    # dropoff this many times over before it is called a failure.
+    # Counted per leg, so each of pickup and dropoff gets this many retries.
     max_retries: 4
     retry_delay: 3.0        # s, between attempts on the same leg
     feedback_period: 0.5    # s; the action promises feedback at least once a second
     leg_timeout: 120.0      # s, before an attempt is abandoned and retried
 
-    # x, y, yaw
-    #
-    # reception and storage were driven to and reached with no recoveries.
-    # lab_bench and charging_dock are NOT where they started out:
-    #   lab_bench was at (6.20, 4.20) and aborted every time -- reaching that
-    #     corner means threading the gap between obstacle_2 and the east wall,
-    #     1.125 m wide but only ~0.22 m of it outside the inflation band,
-    #     against a robot that needs 0.40 m. It now sits west of the cylinder.
-    #   charging_dock was at (0.50, 0.50), a quarter of a metre from the edge
-    #     of obstacle_1, and cost four recoveries every visit.
-    # Which routes actually work, measured rather than assumed:
-    #
-    #   charging_dock -> storage   succeeds, 0 recoveries, ~50s. It crosses the
-    #     corridor, approaching from mid-height. This is the delivery to show.
-    #   reception -> lab_bench     the pickup succeeds; the dropoff does not.
-    #     Coming from the far north-west the robot runs down the divider's west
-    #     face and clips the tip while rounding it, ending at map (3.25, 0.90)
-    #     -- 0.175 m from a wall face, inside its own 0.20 m footprint radius.
-    #     The planner then cannot plan out of its own start pose. Slowing the
-    #     controller to 0.20 m/s stops it wedging badly enough to break the
-    #     planner but does not get it round the corner; nav2_params sets
-    #     BaseObstacle.scale to 0.02, so DWB weights obstacle proximity at
-    #     almost nothing. Tuning the controller is outside this project ("you
-    #     do not write a planner or a controller"), so this route is kept as
-    #     the honest-failure demonstration instead: the courier retries three
-    #     times and then reports failed_leg "dropoff" rather than claiming a
-    #     delivery it did not make.
+    # x, y, yaw -- read them off RViz's Publish Point, and keep each one at
+    # least inflation_radius (0.45 m) clear of any wall.
+
+    # lab_bench and charging_dock were both moved after measuring: the
+    # originals sat inside the inflation band and aborted or cost recoveries.
     locations:
       reception:     [0.60, 4.20,  0.00]
       lab_bench:     [4.50, 4.20,  3.14]

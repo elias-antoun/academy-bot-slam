@@ -1,24 +1,6 @@
-// bt_nodes.hpp
-// ---------------------------------------------------------------------------
-// The one custom leaf in behavior_trees/courier.xml: GoToLocation, which sends
-// a single Nav2 goal and reports whether it arrived. Everything else in that
-// file -- Sequence, RetryUntilSuccessful, Fallback, Timeout, Delay -- is a
-// BehaviorTree.CPP built-in.
-//
-// It is a StatefulActionNode, which is the whole discipline of this file.
-// A SyncActionNode would have to wait for Nav2 to finish inside tick(), and
-// this node runs inside an action server that holds an action client: block
-// the executor there and the result callback that would unblock it can never
-// be delivered. Same rule as the state machine version -- nothing waits.
-//
-//   onStart()    send the goal, return RUNNING
-//   onRunning()  called every tick; RUNNING until a result arrives
-//   onHalted()   cancel the goal -- Timeout expired, or the delivery was
-//                cancelled, or the leg the tree was on has been abandoned
-//
-// Ticks and Nav2 callbacks both run on the one executor thread, so the flags
-// the callbacks set and the tick reads need no mutex.
-// ---------------------------------------------------------------------------
+// GoToLocation, the one custom leaf in courier.xml, written as a
+// StatefulActionNode because a tick that waited for Nav2 would block the
+// thread that has to deliver the result it waits for.
 #ifndef ACADBOT_COURIER__BT_NODES_HPP_
 #define ACADBOT_COURIER__BT_NODES_HPP_
 
@@ -37,14 +19,8 @@
 namespace acadbot_courier
 {
 
-/// Everything the action feedback needs to say, written by the tree and read
-/// by the node's feedback timer.
-///
-/// The tree cannot publish feedback itself: a leaf only exists while it is
-/// ticking, and between attempts the tree is sitting in a Delay with no leaf
-/// running at all. Feedback has to keep flowing through that gap -- the action
-/// promises at least 1 Hz -- so the numbers live out here and the timer reads
-/// them whatever the tree is doing.
+/// Lives beside the tree rather than in the leaf, because between attempts no
+/// leaf is running and the feedback still has to flow.
 struct LegStatus
 {
   Leg leg{Leg::PICKUP};
@@ -56,8 +32,7 @@ struct LegStatus
   int attempts_total{0};             ///< across both legs, for the result
 };
 
-/// The handful of things a GoToLocation needs from the node that owns the
-/// tree. Passed once at registration and shared by every instance.
+/// What a GoToLocation needs from the node that owns the tree.
 struct NavContext
 {
   rclcpp::Node * node{nullptr};
@@ -66,11 +41,8 @@ struct NavContext
   std::string goal_frame{"map"};
 };
 
-/// Drive to one pose. SUCCESS if Nav2 reports arrival, FAILURE otherwise.
-///
-/// The node deliberately knows nothing about retries, timeouts or which leg
-/// comes next -- those are the decorators wrapped around it in courier.xml.
-/// It reports its leg and target only so the feedback can name them.
+/// Drive to one pose, knowing nothing about retries, timeouts or leg order --
+/// those are the decorators wrapped around it in courier.xml.
 class GoToLocation : public BT::StatefulActionNode
 {
 public:
@@ -80,9 +52,7 @@ public:
   GoToLocation(
     const std::string & name, const BT::NodeConfig & config, const NavContext & context);
 
-  /// `pose` is a Pose2D and not a location name because a job's targets are
-  /// frozen when it is booked. Looking the name up again here would let an
-  /// edit to courier.yaml move the destination of an accepted delivery.
+  /// A pose and not a name, because a job's targets are frozen at booking.
   static BT::PortsList providedPorts();
 
 private:
@@ -100,32 +70,20 @@ private:
 
   NavGoalHandle::SharedPtr nav_handle_;
 
-  /// Set by the Nav2 callbacks, read by the next onRunning(). `outcome_` only
-  /// means anything once `finished_` is true.
+  /// Set by the Nav2 callbacks; `outcome_` means nothing until `finished_`.
   bool finished_{false};
   bool outcome_{false};
 
-  /// This attempt has been halted -- by a cancelled delivery, or by the
-  /// Timeout wrapped around it -- and any Nav2 goal it owns must stop.
-  ///
-  /// Needed because a halt can land in the gap between async_send_goal and
-  /// the goal-response callback, when there is no handle to cancel yet. The
-  /// flag makes on_goal_response cancel the goal the moment it arrives;
-  /// without it the tree stops but the robot keeps driving.
+  /// Set on halt, because a halt can land before Nav2 has acknowledged the
+  /// goal and left no handle to cancel -- without this the robot drives on.
   bool halted_{false};
 
-  /// Expires when this node is destroyed.
-  ///
-  /// The Nav2 callbacks are bound to a tree leaf, not to the ROS node, and a
-  /// leaf dies with its tree -- which happens when the next job builds a new
-  /// one. A result still in flight from a cancelled goal would then land in
-  /// freed memory. The callbacks hold a weak_ptr to this and give up if it
-  /// has expired.
+  /// Expires with this leaf, so a Nav2 callback still in flight when the next
+  /// job rebuilds the tree gives up instead of writing into freed memory.
   std::shared_ptr<bool> alive_{std::make_shared<bool>(true)};
 };
 
-/// Teach the factory about GoToLocation, handing every instance the same
-/// context. Called once, before the first tree is built.
+/// Registers GoToLocation with the factory, once, before the first tree.
 void register_courier_nodes(BT::BehaviorTreeFactory & factory, const NavContext & context);
 
 }  // namespace acadbot_courier

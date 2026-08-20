@@ -25,9 +25,8 @@ visualization_msgs::msg::MarkerArray make_location_markers(
   visualization_msgs::msg::MarkerArray array;
   int id = 0;
 
-  // Iteration order is the map's, which is stable for a table that never
-  // changes at run time -- so a location keeps the same id across
-  // republishes and its marker is replaced rather than duplicated.
+  // Map order is stable, so a location keeps its id across republishes and
+  // its marker is replaced rather than duplicated.
   for (const auto & kv : table.all()) {
     const std::string & name = kv.first;
     const Pose2D & pose = kv.second;
@@ -65,13 +64,11 @@ visualization_msgs::msg::MarkerArray make_location_markers(
     }
     arrow.color.a = 0.95f;
 
-    // Zero lifetime means "until replaced", which is what we want: the array
-    // is republished on every change and same ns + id overwrites in place.
+    // Zero lifetime means "until replaced", and same ns + id overwrites.
     arrow.lifetime = rclcpp::Duration(0, 0);
 
-    // The label shares the arrow's pose; TEXT_VIEW_FACING ignores orientation
-    // and always turns to the camera. A separate namespace so labels can be
-    // switched off in RViz without losing the arrows.
+    // A separate namespace so labels can be switched off without losing the
+    // arrows; TEXT_VIEW_FACING ignores orientation and turns to the camera.
     auto label = arrow;
     label.ns = "courier_location_labels";
     label.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;

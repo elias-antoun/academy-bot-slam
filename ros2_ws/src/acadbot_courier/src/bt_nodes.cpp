@@ -67,11 +67,9 @@ BT::NodeStatus GoToLocation::onStart()
     return BT::NodeStatus::FAILURE;
   }
 
-  // Update shared feedback state
   if (context_.status) {
-    // Retries are counted per leg, so the counter restarts when the tree
-    // moves from the pickup to the dropoff. Compared before it is assigned,
-    // because assigning first would erase the very change being looked for.
+    // Compared before it is assigned, because assigning first would erase
+    // the very change being looked for.
     const Leg leg = (leg_name == "pickup") ? Leg::PICKUP : Leg::DROPOFF;
     if (leg != context_.status->leg) {
       context_.status->attempt = 0;
@@ -93,10 +91,8 @@ BT::NodeStatus GoToLocation::onStart()
   NavigateToPose::Goal goal;
   goal.pose = to_pose_stamped(target_pose, context_.goal_frame, context_.node->now());
 
-  // Every callback is guarded by `alive`, because these are bound to a tree
-  // leaf and a leaf dies with its tree -- which the next job replaces. A
-  // result still in flight from a cancelled goal would otherwise land here
-  // long after `this` stopped existing.
+  // Guarded by `alive` because these are bound to a tree leaf, and a leaf
+  // dies with its tree when the next job replaces it.
   std::weak_ptr<bool> alive = alive_;
 
   rclcpp_action::Client<NavigateToPose>::SendGoalOptions opts;
@@ -153,8 +149,7 @@ void GoToLocation::onHalted()
   if (nav_handle_) {
     context_.nav_client->async_cancel_goal(nav_handle_);
   }
-  // If nav_handle_ is null, Nav2 has not acknowledged the goal yet and there
-  // is nothing to cancel. on_goal_response cancels it when it arrives.
+  // With no handle yet, on_goal_response cancels it when it arrives.
   finished_ = true;
   outcome_ = false;
   nav_handle_.reset();
@@ -170,9 +165,8 @@ void GoToLocation::on_goal_response(const NavGoalHandle::SharedPtr & handle)
   }
 
   if (halted_) {
-    // The halt landed in the gap between sending the goal and Nav2
-    // acknowledging it. There was nothing to cancel then; there is now, and
-    // without this the tree stops while the robot drives on.
+    // The halt landed before Nav2 acknowledged the goal; without this the
+    // tree stops while the robot drives on.
     RCLCPP_INFO(
       context_.node->get_logger(),
       "BT GoToLocation: goal acknowledged after the halt -- cancelling it");

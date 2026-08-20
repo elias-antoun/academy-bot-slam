@@ -1,30 +1,6 @@
-// initial_pose_seeder.cpp
-// ---------------------------------------------------------------------------
-// Tells AMCL where the robot starts, so the demo needs no mouse.
-//
-// AMCL is handed a finished map and asked where the robot is in it. It refuses
-// to guess -- nav2_params.yaml sets no initial pose -- so it publishes nothing
-// until it is told, and nothing downstream survives that: without map->odom the
-// Nav2 costmaps cannot configure, the lifecycle manager times out, and every
-// goal afterwards comes back rejected. In Sessions 3 and 4 a human clicks 2D
-// Pose Estimate in RViz. "One command brings it up" means doing that without
-// the click.
-//
-// Publishing once on a timer does not work reliably. AMCL looks up
-// base_footprint->odom around the pose's timestamp, and early in a run its TF
-// buffer holds a fraction of a second, so the pose lands outside it:
-//
-//   Failed to transform initial pose in time (extrapolation into the past.
-//   Requested time 11.580 but the earliest data is at time 11.800)
-//
-// The window opens as TF matures, but *when* depends on the machine. Rather
-// than guess a delay, this node publishes and then checks whether it worked,
-// and repeats until map->odom actually exists.
-//
-// It will not touch a robot that is already localized: if map->odom is present
-// on the first check, someone (or something) has already set a pose, and
-// re-seeding would throw away a good estimate and replace it with a guess.
-// ---------------------------------------------------------------------------
+// Tells AMCL where the robot starts so the demo needs no mouse, by
+// publishing a pose, checking whether map->odom actually appeared, and
+// repeating until it has.
 #include <chrono>
 #include <memory>
 #include <string>
@@ -66,9 +42,8 @@ public:
 
     pose_pub_ = create_publisher<PoseWithCovarianceStamped>("/initialpose", 10);
 
-    // AMCL only publishes map->odom off the back of a filter update, and a
-    // filter update needs a scan. Seed before the laser is running and it
-    // accepts the pose, emits a transform briefly, and then goes quiet.
+    // AMCL only publishes map->odom off a filter update, and that needs a
+    // scan; seed before the laser is running and the transform dies again.
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_, rclcpp::SensorDataQoS(),
       [this](const sensor_msgs::msg::LaserScan::SharedPtr) {++scans_seen_;});
@@ -84,18 +59,9 @@ public:
   }
 
 private:
-  /// Is AMCL *still* publishing map->odom?
-  ///
-  /// Three weaker versions of this check were wrong in the same way. Asking
-  /// whether the transform exists fails because tf2 caches for ten seconds
-  /// and TimePointZero returns the latest available, so a transform AMCL
-  /// emitted once and abandoned keeps answering yes. Asking how old it is
-  /// fails too: the age is measured in simulated time, which barely advances
-  /// while Gazebo is starting -- precisely the window this has to police.
-  ///
-  /// So ask neither. A stamp that keeps changing means AMCL is still
-  /// publishing; a stamp frozen at the value it had last second means it has
-  /// stopped. That holds whatever the clock is doing.
+  /// Existence and age both lie -- tf2 caches a dead transform for ten seconds
+  /// and sim time barely moves during startup -- so the only honest test of
+  /// whether AMCL is alive is a stamp that keeps changing.
   bool transform_advancing()
   {
     try {
@@ -112,8 +78,7 @@ private:
     }
   }
 
-  /// AMCL needs this to place the pose; before it exists there is no point
-  /// publishing at all.
+  /// AMCL needs this to place the pose.
   bool odometry_alive()
   {
     std::string ignored;
@@ -136,9 +101,8 @@ private:
                "already, so nothing to do.");
         return;
       }
-      // Confirmed more than once on purpose. A pose accepted before AMCL is
-      // really running produces a transform that appears and then stops;
-      // one check of a thing that flickers is not a check.
+      // Confirmed more than once, because a pose accepted too early makes a
+      // transform that appears and then stops.
       if (++confirmed_ >= confirmations_) {
         RCLCPP_INFO(get_logger(),
           "map->odom advancing for %d checks after %d attempt(s); localized.",
@@ -180,9 +144,8 @@ private:
   {
     PoseWithCovarianceStamped msg;
     msg.header.frame_id = map_frame_;
-    // Left at zero on purpose. tf2 reads a zero stamp as "the latest
-    // available", which is the one lookup that cannot lose a race against a
-    // buffer that is still filling.
+    // Left at zero on purpose: tf2 reads that as "the latest available",
+    // which cannot lose a race against a buffer that is still filling.
     msg.header.stamp = rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
     msg.pose.pose.position.x = x_;
@@ -193,8 +156,7 @@ private:
     msg.pose.pose.orientation = tf2::toMsg(q);
 
     // The spread RViz's 2D Pose Estimate uses: half a metre and about 15
-    // degrees of doubt, which is roughly how well anyone knows where a robot
-    // is by pointing at it.
+    // degrees of doubt.
     msg.pose.covariance[0] = 0.25;    // var(x)
     msg.pose.covariance[7] = 0.25;    // var(y)
     msg.pose.covariance[35] = 0.068;  // var(yaw)

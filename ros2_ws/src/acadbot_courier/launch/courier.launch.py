@@ -1,47 +1,12 @@
 #!/usr/bin/env python3
-"""courier.launch.py — everything needed to demonstrate the courier, in one command.
+"""One command for the whole courier demo: simulation, localization, the pose
+seeder, Nav2, RViz and the courier itself.
 
     ros2 launch acadbot_courier courier.launch.py
 
-Brings up, in this order:
-  1. the simulation (Gazebo + the ros_gz bridge)
-  2. map_server + AMCL on the saved map, seeded with the robot's spawn pose
-  3. the Nav2 servers, held back until localization is up
-  4. RViz, showing the map, the costmaps and the courier's locations
-  5. courier_server itself
-
-Then, in another terminal:
-
-    ros2 service call /request_delivery \\
-      acadbot_courier_msgs/srv/RequestDelivery "{pickup: reception, dropoff: lab_bench}"
-    ros2 action send_goal /execute_delivery \\
-      acadbot_courier_msgs/action/ExecuteDelivery "{job_id: job_0001}" --feedback
-
-Two things about the ordering are not arbitrary.
-
-AMCL is seeded by publishing /initialpose on a timer, not by its
-set_initial_pose parameter: AMCL applies that the instant it activates, before
-its first /clock message has arrived, so under use_sim_time the pose is
-stamped t=0 and no transform for it has ever existed. Localization itself
-starts immediately, so AMCL's TF buffer has the whole startup to fill before
-the pose arrives.
-
-Nav2 is delayed until after the seed. Its costmaps cannot configure without
-map->odom, and if that transition times out the lifecycle manager aborts the
-whole bringup and leaves every server INACTIVE, after which every goal comes
-back "rejected".
-
-Localization and Nav2 are both given the course's nav2_params.yaml. There was
-once a courier-owned amcl.yaml here; it turned out to differ from the course's
-amcl block by a single parameter that was already AMCL's default, so it was
-deleted. See docs/REPORT.md 2.2.
-
-This still composes the stack rather than including acadbot_bringup's
-autonomy.launch.py, which forwards no params_file -- but the ordering below is
-now the only thing that would have to be reproduced to switch to including it.
-
 Arguments:
-    headless:=true    Gazebo server only — no GUI, no GPU needed
+    mission:=fsm|bt   which mission engine runs (default fsm)
+    headless:=true    Gazebo server only -- no GUI, no GPU needed
     rviz:=false       skip RViz2
     map:=<path>       localize on a different saved map
     initial_x/initial_y/initial_yaw   where the robot starts, in the map frame
@@ -78,16 +43,8 @@ def generate_launch_description():
         launch_arguments={'headless': headless}.items(),
     )
 
-    # map_server + AMCL + their lifecycle manager, started with the
-    # simulation and not after it. AMCL keeps its own TF buffer, and that
-    # buffer only starts filling when the node does -- start it late and the
-    # buffer holds a single sample, so an initial pose arriving moments later
-    # cannot be transformed at all:
-    #
-    #   Requested time 20.243 but the earliest data is at time 20.400
-    #
-    # Starting it here gives the buffer the whole startup to fill before the
-    # pose is seeded below.
+    # Started with the simulation, not after it: AMCL's TF buffer only fills
+    # from the moment the node starts.
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_nav2_bringup, 'launch', 'localization_launch.py')),
@@ -98,15 +55,8 @@ def generate_launch_description():
         }.items(),
     )
 
-    # Tell AMCL where the robot starts, so the demo needs no mouse.
-    #
-    # A node rather than a `ros2 topic pub` on a timer, because publishing once
-    # at a fixed moment is unreliable: AMCL looks up base_footprint->odom
-    # around the pose's timestamp, and early in a run its TF buffer holds only
-    # a fraction of a second, so the pose lands outside it. When the window
-    # opens depends on the machine. The seeder publishes, checks whether
-    # map->odom actually appeared, and repeats until it has -- so there is no
-    # delay to guess at. It also leaves an already-localized robot alone.
+    # A node rather than a timed `topic pub`, because AMCL silently ignores a
+    # pose that arrives before it is active and the seeder can check and retry.
     seeder = Node(
         package='acadbot_courier',
         executable='initial_pose_seeder',
@@ -120,9 +70,7 @@ def generate_launch_description():
         }],
     )
 
-    # The course's own Nav2 bringup, with the course's own parameters: nothing
-    # about the planner, controller or recovery behaviours changes for this
-    # project.
+    # The course's own Nav2 bringup and parameters, unchanged.
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_nav, 'launch', 'nav2_stack.launch.py')),
@@ -134,8 +82,8 @@ def generate_launch_description():
     delayed_nav2 = TimerAction(
         period=LaunchConfiguration('nav2_delay'), actions=[nav2])
 
-    # The mission runner: either the baseline FSM (courier_server) or the
-    # Behavior Tree bonus implementation (courier_bt_server).
+    # Exactly one of the two engines runs; both claim the same service and
+    # action names.
     mission = LaunchConfiguration('mission')
     use_fsm = PythonExpression(["'", mission, "' == 'fsm'"])
     use_bt = PythonExpression(["'", mission, "' == 'bt'"])
